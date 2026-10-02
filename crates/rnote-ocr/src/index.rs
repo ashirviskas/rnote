@@ -4,7 +4,7 @@
 //! hash, so only the changed parts of a file need to be recognised again.
 
 // Imports
-use crate::{Bounds, CharBox, Hit, Line, Unit};
+use crate::{Bounds, Hit, Line, Query, Unit};
 use anyhow::Context;
 use rusqlite::{Connection, params};
 use std::collections::{HashMap, HashSet};
@@ -208,68 +208,35 @@ impl Index {
         Ok(missing.len())
     }
 
-    /// Finds the query in all indexed lines, the best hits first.
-    ///
-    /// A line matches where the characters of the query appear in a row, each among the candidates of its position.
-    /// Whitespace and zhuyin tone marks are ignored and letter case does not matter. A query without zhuyin also
-    /// matches across zhuyin symbols, which is what ruby zhuyin beside characters is read as.
+    /// Finds the query in all indexed lines, the best hits first. See [Query::find] for what matches.
     pub fn search(&self, query: &str) -> anyhow::Result<Vec<Hit>> {
-        let query = query
-            .chars()
-            .filter(|&c| !is_ignored(c))
-            .map(fold_case)
-            .collect::<Vec<char>>();
-        if query.is_empty() {
+        let Some(query) = Query::new(query) else {
             return Ok(Vec::new());
-        }
-
-        let query_has_zhuyin = query.iter().any(|&c| is_zhuyin(c));
+        };
 
         let mut hits = Vec::new();
         let mut select = self.conn.prepare(
-            "SELECT files.path, units.page, lines.y, lines.h, lines.text, lines.chars
+            "SELECT files.path, units.page, lines.x, lines.y, lines.w, lines.h, lines.text, lines.chars
              FROM lines JOIN units ON units.id = lines.unit_id JOIN files ON files.id = units.file_id",
         )?;
         let mut rows = select.query([])?;
         while let Some(row) = rows.next()? {
-            let chars: Vec<CharBox> = serde_json::from_str(row.get_ref(5)?.as_str()?)?;
-            let chars = chars
-                .iter()
-                .filter(|c| c.top().is_some_and(|ch| !is_ignored(ch)))
-                .collect::<Vec<&CharBox>>();
-            // Ruby zhuyin beside characters is read as zhuyin symbols in between them. So a query without
-            // zhuyin is also tried on the line with its zhuyin left out.
-            let without_zhuyin = chars
-                .iter()
-                .copied()
-                .filter(|c| !c.top().is_some_and(is_zhuyin))
-                .collect::<Vec<&CharBox>>();
-            let mut sequences = vec![&chars];
-            if !query_has_zhuyin && without_zhuyin.len() < chars.len() {
-                sequences.push(&without_zhuyin);
-            }
-
-            let mut found = Vec::new();
-            for window in sequences.iter().flat_map(|s| s.windows(query.len())) {
-                let Some(score) = match_score(window, &query) else {
-                    continue;
-                };
-                let (x0, x1) = (window[0].x0, window[window.len() - 1].x1);
-                if found.contains(&(x0, x1)) {
-                    continue;
-                }
-                found.push((x0, x1));
+            let line = Line {
+                bounds: Bounds {
+                    x: row.get(2)?,
+                    y: row.get(3)?,
+                    w: row.get(4)?,
+                    h: row.get(5)?,
+                },
+                chars: serde_json::from_str(row.get_ref(7)?.as_str()?)?,
+            };
+            for found in query.find(&line) {
                 hits.push(Hit {
                     path: PathBuf::from(row.get::<_, String>(0)?),
                     page: row.get(1)?,
-                    bounds: Bounds {
-                        x: x0,
-                        y: row.get(2)?,
-                        w: x1 - x0,
-                        h: row.get(3)?,
-                    },
-                    text: row.get(4)?,
-                    score,
+                    bounds: found.bounds,
+                    text: row.get(6)?,
+                    score: found.score,
                 });
             }
         }
@@ -292,36 +259,6 @@ fn file_id(conn: &Connection, path: &Path) -> anyhow::Result<i64> {
     )?)
 }
 
-/// Scores the characters against the query, or returns `None` when they do not match.
-///
-/// The score is the mean confidence of the matched readings, plus one when all of them are the most likely reading.
-fn match_score(chars: &[&CharBox], query: &[char]) -> Option<f32> {
-    let mut exact = true;
-    let mut confidence = 0.0;
-    for (c, &wanted) in chars.iter().zip(query) {
-        let position = c
-            .candidates
-            .iter()
-            .position(|candidate| fold_case(candidate.ch) == wanted)?;
-        exact &= position == 0;
-        confidence += c.candidates[position].confidence;
-    }
-    Some(confidence / query.len() as f32 + if exact { 1.0 } else { 0.0 })
-}
-
-/// Whether the character plays no part in matching. Tone marks are small and often not read, or not typed.
-fn is_ignored(c: char) -> bool {
-    c.is_whitespace() || matches!(c, 'ˊ' | 'ˇ' | 'ˋ' | '˙')
-}
-
-fn is_zhuyin(c: char) -> bool {
-    ('\u{3105}'..='\u{312F}').contains(&c)
-}
-
-fn fold_case(c: char) -> char {
-    c.to_lowercase().next().unwrap_or(c)
-}
-
 fn path_str(path: &Path) -> anyhow::Result<&str> {
     path.to_str()
         .with_context(|| format!("The path \"{}\" is not valid UTF-8.", path.display()))
@@ -330,7 +267,7 @@ fn path_str(path: &Path) -> anyhow::Result<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Candidate, Source};
+    use crate::{Candidate, CharBox, Source};
 
     const PATH: &str = "/notes/a.rnote";
     const STAMP: FileStamp = FileStamp {
@@ -351,13 +288,12 @@ mod tests {
         let chars = text
             .chars()
             .enumerate()
-            .map(|(i, ch)| CharBox {
-                x0: bounds.x + i as f64 * advance,
-                x1: bounds.x + (i + 1) as f64 * advance,
-                candidates: vec![Candidate {
+            .map(|(i, ch)| {
+                CharBox::exact(
                     ch,
-                    confidence: 1.0,
-                }],
+                    bounds.x + i as f64 * advance,
+                    bounds.x + (i + 1) as f64 * advance,
+                )
             })
             .collect();
         Line { bounds, chars }

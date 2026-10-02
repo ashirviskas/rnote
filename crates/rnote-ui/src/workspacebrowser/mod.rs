@@ -19,7 +19,6 @@ use gtk4::{
     SingleSelection, SortListModel, SorterChange, Widget, gdk, gio, glib, glib::clone,
     glib::closure, prelude::*, subclass::prelude::*,
 };
-use rnote_ocr::Hit;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use tracing::warn;
@@ -33,8 +32,8 @@ mod imp {
         pub(crate) action_group: gio::SimpleActionGroup,
         pub(crate) dir_list: DirectoryList,
         pub(crate) list_selection_model: SingleSelection,
-        /// The hits of the current search, the rows of the search results listbox are in the same order.
-        pub(crate) search_hits: RefCell<Vec<Hit>>,
+        /// The results of the current search, the rows of the search results listbox are in the same order.
+        pub(crate) search_results: RefCell<Vec<search::SearchResult>>,
 
         #[template_child]
         pub(crate) grid: TemplateChild<Grid>,
@@ -60,6 +59,8 @@ mod imp {
         pub(crate) search_entry: TemplateChild<SearchEntry>,
         #[template_child]
         pub(crate) search_results_listbox: TemplateChild<ListBox>,
+        #[template_child]
+        pub(crate) search_results_placeholder: TemplateChild<Label>,
     }
 
     impl Default for RnWorkspaceBrowser {
@@ -71,7 +72,7 @@ mod imp {
                 action_group: gio::SimpleActionGroup::new(),
                 dir_list,
                 list_selection_model: SingleSelection::default(),
-                search_hits: RefCell::default(),
+                search_results: RefCell::default(),
 
                 grid: TemplateChild::<Grid>::default(),
                 dir_box: TemplateChild::<gtk4::Box>::default(),
@@ -85,6 +86,7 @@ mod imp {
                 workspacesbar: TemplateChild::<RnWorkspacesBar>::default(),
                 search_entry: TemplateChild::<SearchEntry>::default(),
                 search_results_listbox: TemplateChild::<ListBox>::default(),
+                search_results_placeholder: TemplateChild::<Label>::default(),
             }
         }
     }

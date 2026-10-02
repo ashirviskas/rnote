@@ -123,7 +123,9 @@ flatpak run --command=rnote-cli com.github.flxzt.rnote help
 Handwriting, imported images and Pdf pages, and typed text are read on-device (CPU only) and can be searched from the
 search entry in the workspace browser (search button in the header, or `Ctrl+F`). Hits are highlighted on the canvas.
 
-- Files are indexed in the background when they are opened or saved. Index a whole folder with `rnote-cli index <folder>`.
+- Typed text and the text of imported Pdfs are found in the open document right away, saved or not. Handwriting
+  and images are found once the document is saved: files are indexed in the background when they are opened or
+  saved, and results fill in while that runs. Index a whole folder with `rnote-cli index <folder>`.
 - Search from the terminal with `rnote-cli search <text>`.
 - A Pdf that has a text layer keeps its text when it is imported, so its pages are found exactly and without
   recognition. `rnote-cli import note.rnote -i file.pdf` imports one from the terminal.

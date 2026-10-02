@@ -6,5 +6,6 @@ rnote_ocr_sources = files(
     '../models/zhuyin_dict.txt',
     'index.rs',
     'lib.rs',
+    'query.rs',
     'recognize.rs',
 )

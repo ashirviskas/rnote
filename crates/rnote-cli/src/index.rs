@@ -7,7 +7,7 @@ use rnote_compose::shapes::Shapeable;
 use rnote_engine::Engine;
 use rnote_engine::engine::EngineSnapshot;
 use rnote_engine::engine::export::{TextLayer, TextUnit};
-use rnote_ocr::{Bounds, Candidate, CharBox, FileStamp, Index, Line, Recognizer, Source, Unit};
+use rnote_ocr::{Bounds, CharBox, FileStamp, Index, Line, Recognizer, Source, Unit};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -168,14 +168,7 @@ fn read_unit(
                 chars: line
                     .chars
                     .into_iter()
-                    .map(|c| CharBox {
-                        x0: c.bounds.mins.x,
-                        x1: c.bounds.maxs.x,
-                        candidates: vec![Candidate {
-                            ch: c.ch,
-                            confidence: 1.0,
-                        }],
-                    })
+                    .map(|c| CharBox::exact(c.ch, c.bounds.mins.x, c.bounds.maxs.x))
                     .collect(),
             }
         }));
