@@ -1,5 +1,6 @@
 // Modules
 mod filerow;
+mod search;
 mod widgethelper;
 mod workspaceactions;
 pub(crate) mod workspacesbar;
@@ -13,11 +14,13 @@ pub(crate) use workspacesbar::RnWorkspacesBar;
 use crate::appwindow::RnAppWindow;
 use gtk4::{
     Button, CompositeTemplate, ConstantExpression, CustomFilter, CustomSorter, DirectoryList,
-    FileFilter, FilterChange, FilterListModel, Grid, Label, ListItem, ListView, MultiSorter,
-    PropertyExpression, ScrolledWindow, Separator, SignalListItemFactory, SingleSelection,
-    SortListModel, SorterChange, Widget, gdk, gio, glib, glib::clone, glib::closure, prelude::*,
-    subclass::prelude::*,
+    FileFilter, FilterChange, FilterListModel, Grid, Label, ListBox, ListItem, ListView,
+    MultiSorter, PropertyExpression, ScrolledWindow, SearchEntry, Separator, SignalListItemFactory,
+    SingleSelection, SortListModel, SorterChange, Widget, gdk, gio, glib, glib::clone,
+    glib::closure, prelude::*, subclass::prelude::*,
 };
+use rnote_ocr::Hit;
+use std::cell::RefCell;
 use std::path::PathBuf;
 use tracing::warn;
 
@@ -30,6 +33,8 @@ mod imp {
         pub(crate) action_group: gio::SimpleActionGroup,
         pub(crate) dir_list: DirectoryList,
         pub(crate) list_selection_model: SingleSelection,
+        /// The hits of the current search, the rows of the search results listbox are in the same order.
+        pub(crate) search_hits: RefCell<Vec<Hit>>,
 
         #[template_child]
         pub(crate) grid: TemplateChild<Grid>,
@@ -51,6 +56,10 @@ mod imp {
         pub(crate) dir_controls_actions_box: TemplateChild<gtk4::Box>,
         #[template_child]
         pub(crate) workspacesbar: TemplateChild<RnWorkspacesBar>,
+        #[template_child]
+        pub(crate) search_entry: TemplateChild<SearchEntry>,
+        #[template_child]
+        pub(crate) search_results_listbox: TemplateChild<ListBox>,
     }
 
     impl Default for RnWorkspaceBrowser {
@@ -62,6 +71,7 @@ mod imp {
                 action_group: gio::SimpleActionGroup::new(),
                 dir_list,
                 list_selection_model: SingleSelection::default(),
+                search_hits: RefCell::default(),
 
                 grid: TemplateChild::<Grid>::default(),
                 dir_box: TemplateChild::<gtk4::Box>::default(),
@@ -73,6 +83,8 @@ mod imp {
                 dir_controls_dir_up_button: TemplateChild::<Button>::default(),
                 dir_controls_actions_box: TemplateChild::<gtk4::Box>::default(),
                 workspacesbar: TemplateChild::<RnWorkspacesBar>::default(),
+                search_entry: TemplateChild::<SearchEntry>::default(),
+                search_results_listbox: TemplateChild::<ListBox>::default(),
             }
         }
     }
@@ -165,6 +177,7 @@ impl RnWorkspaceBrowser {
 
         self.setup_dir_controls(appwindow);
         self.setup_files_list(appwindow);
+        self.setup_search(appwindow);
         self.setup_actions(appwindow);
     }
 

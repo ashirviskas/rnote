@@ -12,6 +12,8 @@ version.workspace = true
 [dependencies]
 rnote-compose = { workspace = true }
 rnote-engine = { workspace = true, features = ["ui"] }
+# Without the "recognize" feature: the ui only reads the index, recognising is done by the cli
+rnote-ocr = { workspace = true }
 
 adw = { workspace = true }
 anyhow = { workspace = true }

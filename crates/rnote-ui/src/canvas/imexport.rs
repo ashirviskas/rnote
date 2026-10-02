@@ -39,6 +39,9 @@ impl RnCanvas {
         self.dismiss_output_file_modified_toast();
         self.set_unsaved_changes(false);
         self.set_empty(false);
+        if let Some(output_filepath) = self.output_file().and_then(|f| f.path()) {
+            crate::indexer::queue(output_filepath);
+        }
 
         Ok(widget_flags)
     }
@@ -271,6 +274,7 @@ impl RnCanvas {
         }
         self.set_unsaved_changes(false);
         self.set_save_in_progress(false);
+        crate::indexer::queue(filepath);
 
         Ok(true)
     }
