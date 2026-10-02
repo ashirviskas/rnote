@@ -121,7 +121,7 @@ flatpak run --command=rnote-cli com.github.flxzt.rnote help
 ## Text Search (this fork)
 
 Handwriting, imported images and Pdf pages, and typed text are read on-device (CPU only) and can be searched from the
-search entry in the workspace browser. Hits are highlighted on the canvas.
+search entry in the workspace browser (search button in the header, or `Ctrl+F`). Hits are highlighted on the canvas.
 
 - Files are indexed in the background when they are opened or saved. Index a whole folder with `rnote-cli index <folder>`.
 - Search from the terminal with `rnote-cli search <text>`.

@@ -51,6 +51,8 @@ impl RnAppWindow {
         self.add_action(&action_open_canvasmenu);
         let action_open_appmenu = gio::SimpleAction::new("open-appmenu", None);
         self.add_action(&action_open_appmenu);
+        let action_search = gio::SimpleAction::new("search", None);
+        self.add_action(&action_search);
         let action_toggle_overview = gio::SimpleAction::new("toggle-overview", None);
         self.add_action(&action_toggle_overview);
         let action_devel_menu = gio::SimpleAction::new("devel-menu", None);
@@ -255,6 +257,20 @@ impl RnAppWindow {
                     appwindow.split_view().set_show_sidebar(false);
                 }
                 appwindow.main_header().canvasmenu().popovermenu().popup();
+            }
+        ));
+
+        // Search in the notes: the search entry lives in the workspace browser of the sidebar
+        action_search.connect_activate(clone!(
+            #[weak(rename_to=appwindow)]
+            self,
+            move |_, _| {
+                appwindow.split_view().set_show_sidebar(true);
+                appwindow
+                    .sidebar()
+                    .sidebar_stack()
+                    .set_visible_child_name("workspacebrowser_page");
+                appwindow.sidebar().workspacebrowser().focus_search();
             }
         ));
 
@@ -1186,6 +1202,7 @@ impl RnAppWindow {
         app.set_accels_for_action("win.toggle-overview", &["<Ctrl><Shift>o"]);
         app.set_accels_for_action("win.open-canvasmenu", &["F9"]);
         app.set_accels_for_action("win.open-appmenu", &["F10"]);
+        app.set_accels_for_action("win.search", &["<Ctrl>f"]);
         app.set_accels_for_action("win.open-doc", &["<Ctrl>o"]);
         app.set_accels_for_action("win.save-doc", &["<Ctrl>s"]);
         app.set_accels_for_action("win.save-doc-as", &["<Ctrl><Shift>s"]);

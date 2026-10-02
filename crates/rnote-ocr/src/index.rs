@@ -37,6 +37,9 @@ pub struct Index {
 
 impl Index {
     const FILE_NAME: &'static str = "index.sqlite";
+    /// To be raised whenever the tables or the recognition models change. An index of another version is emptied
+    /// and fills again as files get indexed.
+    const VERSION: i32 = 1;
     // The stamp of a file is zero until all of its units are indexed.
     const SCHEMA: &'static str = "
         PRAGMA foreign_keys = ON;
@@ -76,6 +79,17 @@ impl Index {
         }
         let conn = Connection::open(path)
             .with_context(|| format!("Opening the index \"{}\" failed.", path.display()))?;
+        Self::with_connection(conn)
+    }
+
+    fn with_connection(conn: Connection) -> anyhow::Result<Self> {
+        let version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version != Self::VERSION {
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS lines; DROP TABLE IF EXISTS units; DROP TABLE IF EXISTS files;",
+            )?;
+            conn.pragma_update(None, "user_version", Self::VERSION)?;
+        }
         conn.execute_batch(Self::SCHEMA)?;
         Ok(Self { conn })
     }
@@ -192,11 +206,11 @@ impl Index {
     /// Finds the query in all indexed lines, the best hits first.
     ///
     /// A line matches where the characters of the query appear in a row, each among the candidates of its position.
-    /// Whitespace is ignored and letter case does not matter.
+    /// Whitespace and zhuyin tone marks are ignored and letter case does not matter.
     pub fn search(&self, query: &str) -> anyhow::Result<Vec<Hit>> {
         let query = query
             .chars()
-            .filter(|c| !c.is_whitespace())
+            .filter(|&c| !is_ignored(c))
             .map(fold_case)
             .collect::<Vec<char>>();
         if query.is_empty() {
@@ -213,7 +227,7 @@ impl Index {
             let chars: Vec<CharBox> = serde_json::from_str(row.get_ref(5)?.as_str()?)?;
             let chars = chars
                 .iter()
-                .filter(|c| c.top().is_some_and(|ch| !ch.is_whitespace()))
+                .filter(|c| c.top().is_some_and(|ch| !is_ignored(ch)))
                 .collect::<Vec<&CharBox>>();
 
             for window in chars.windows(query.len()) {
@@ -271,6 +285,11 @@ fn match_score(chars: &[&CharBox], query: &[char]) -> Option<f32> {
     Some(confidence / query.len() as f32 + if exact { 1.0 } else { 0.0 })
 }
 
+/// Whether the character plays no part in matching. Tone marks are small and often not read, or not typed.
+fn is_ignored(c: char) -> bool {
+    c.is_whitespace() || matches!(c, 'ˊ' | 'ˇ' | 'ˋ' | '˙')
+}
+
 fn fold_case(c: char) -> char {
     c.to_lowercase().next().unwrap_or(c)
 }
@@ -322,10 +341,7 @@ mod tests {
 
     /// An index holding one file with one unit per line.
     fn index_with(lines: Vec<Line>) -> Index {
-        let mut index = Index {
-            conn: Connection::open_in_memory().unwrap(),
-        };
-        index.conn.execute_batch(Index::SCHEMA).unwrap();
+        let mut index = Index::with_connection(Connection::open_in_memory().unwrap()).unwrap();
         let units = (0..lines.len() as u64)
             .map(|i| unit(i, 3))
             .collect::<Vec<Unit>>();
@@ -366,6 +382,27 @@ mod tests {
         let index = index_with(vec![typed("Hello World", BOUNDS)]);
         assert_eq!(index.search("LOW or").unwrap().len(), 1);
         assert!(index.search("  ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn ignores_tone_marks() {
+        let index = index_with(vec![typed("ㄇㄚˇ ㄇㄚ˙", BOUNDS)]);
+        assert_eq!(index.search("ㄇㄚㄇㄚ").unwrap().len(), 1);
+        assert_eq!(index.search("ㄇㄚˋㄇㄚ").unwrap().len(), 1);
+        assert!(index.search("ˇ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_index_of_another_version_is_emptied() {
+        let index = index_with(vec![typed("kept", BOUNDS)]);
+        let same = Index::with_connection(index.conn).unwrap();
+        assert_eq!(same.search("kept").unwrap().len(), 1);
+
+        same.conn
+            .pragma_update(None, "user_version", Index::VERSION + 1)
+            .unwrap();
+        let other = Index::with_connection(same.conn).unwrap();
+        assert!(other.search("kept").unwrap().is_empty());
     }
 
     #[test]
