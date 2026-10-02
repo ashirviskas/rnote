@@ -62,6 +62,13 @@
                     <property name="tooltip-text" translatable="yes">Focus Mode</property>
                   </object>
                 </child>
+                <child>
+                  <object class="GtkButton">
+                    <property name="icon-name">system-search-symbolic</property>
+                    <property name="action-name">win.search</property>
+                    <property name="tooltip-text" translatable="yes">Search in Notes</property>
+                  </object>
+                </child>
               </object>
             </child>
           </object>
