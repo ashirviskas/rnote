@@ -82,6 +82,11 @@ impl RnWorkspaceBrowser {
         ));
     }
 
+    /// Puts the keyboard focus into the search entry.
+    pub(crate) fn focus_search(&self) {
+        self.imp().search_entry.grab_focus();
+    }
+
     /// Shows the hits in place of the files. `None` shows the files again and clears the highlights on all tabs.
     fn show_search_hits(&self, hits: Option<Vec<Hit>>, appwindow: &RnAppWindow) {
         let imp = self.imp();
