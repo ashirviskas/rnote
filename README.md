@@ -123,9 +123,12 @@ flatpak run --command=rnote-cli com.github.flxzt.rnote help
 Handwriting, imported images and Pdf pages, and typed text are read on-device (CPU only) and can be searched from the
 search entry in the workspace browser. Hits are highlighted on the canvas.
 
-- Download the recognition models once with `just ocr-models`.
 - Files are indexed in the background when they are opened or saved. Index a whole folder with `rnote-cli index <folder>`.
 - Search from the terminal with `rnote-cli search <text>`.
+- The recognition models are part of the build, nothing needs to be downloaded. How it works:
+  [crates/rnote-ocr](./crates/rnote-ocr/README.md).
+
+![search](./crates/rnote-ui/data/screenshots/search.png)
 
 ## Screenshots
 

@@ -1,21 +1,20 @@
 //! Recognises one image and prints its lines with their character boxes.
 //!
-//! Usage: `cargo run -p rnote-ocr --features recognize --example recognize -- <image> [model-dir]`
+//! Usage: `cargo run -p rnote-ocr --features recognize --example recognize -- <image>`
 
 use rnote_ocr::Recognizer;
 use std::path::PathBuf;
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
-    let mut args = std::env::args_os().skip(1);
-    let image_path = PathBuf::from(args.next().expect("Usage: recognize <image> [model-dir]"));
-    let model_dir = match args.next() {
-        Some(dir) => PathBuf::from(dir),
-        None => rnote_ocr::data_dir()?,
-    };
+    let image_path = PathBuf::from(
+        std::env::args_os()
+            .nth(1)
+            .expect("Usage: recognize <image>"),
+    );
 
     let image = image::open(&image_path)?.into_rgb8();
-    let mut recognizer = Recognizer::new(&model_dir)?;
+    let mut recognizer = Recognizer::new()?;
     let start = Instant::now();
     let lines = recognizer.recognize(&image)?;
     let elapsed = start.elapsed();
