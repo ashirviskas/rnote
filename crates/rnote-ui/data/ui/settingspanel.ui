@@ -54,6 +54,12 @@
                       </object>
                     </child>
                     <child>
+                      <object class="AdwSwitchRow" id="general_search_zhuyin_row">
+                        <property name="title" translatable="yes">Read Zhuyin (experimental)</property>
+                        <property name="subtitle" translatable="yes">Read zhuyin symbols when indexing notes for search. Can replace characters that look like them</property>
+                      </object>
+                    </child>
+                    <child>
                       <object class="AdwSwitchRow" id="general_show_scrollbars_row">
                         <property name="title" translatable="yes">Show Scrollbars</property>
                         <property name="subtitle" translatable="yes">Set whether the scrollbars on the canvas are shown</property>

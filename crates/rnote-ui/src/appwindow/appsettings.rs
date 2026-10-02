@@ -34,6 +34,15 @@ impl RnAppWindow {
             .get_no_changes()
             .build();
 
+        // The indexer reads this setting when it starts the cli, see `indexer`
+        app_settings
+            .bind(
+                "search-zhuyin",
+                &self.sidebar().settings_panel().general_search_zhuyin_row(),
+                "active",
+            )
+            .build();
+
         // autosave
         app_settings
             .bind("autosave", self, "autosave")

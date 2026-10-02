@@ -99,6 +99,11 @@ pub(crate) enum Command {
         /// The rnote files or folders. Folders are searched for rnote files recursively.
         #[arg(required = true)]
         paths: Vec<PathBuf>,
+        /// Also read zhuyin (bopomofo). Experimental: a zhuyin symbol can take the place of a character that
+        /// looks like it, the character then stays findable as a second reading.{n}
+        /// Files that were indexed without this option are read again, and the other way round.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        zhuyin: bool,
     },
     /// Searches the text of all indexed rnote files. Prints the file, the page and the text of each hit.
     Search {
@@ -304,8 +309,8 @@ pub(crate) async fn run() -> anyhow::Result<()> {
             create::run_create(&new_rnote_file).await?;
             println!("File creation finished!");
         }
-        Command::Index { paths } => {
-            index::run_index(&paths).await?;
+        Command::Index { paths, zhuyin } => {
+            index::run_index(&paths, zhuyin).await?;
         }
         Command::Search { query } => {
             search::run_search(&query.concat())?;

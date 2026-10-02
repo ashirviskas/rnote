@@ -125,6 +125,10 @@
       <default>120</default>
       <summary>the sec interval for the autosave</summary>
     </key>
+    <key name="search-zhuyin" type="b">
+      <default>false</default>
+      <summary>Whether zhuyin is read when notes are indexed for search (experimental)</summary>
+    </key>
     <key name="show-scrollbars" type="b">
       <default>false</default>
       <summary>Whether the canvas scrollbars are shown</summary>
