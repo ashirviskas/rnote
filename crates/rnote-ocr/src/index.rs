@@ -11,20 +11,23 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-/// The state of a file on disk. A file is looked at again when it changes.
+/// What a file was indexed from: its state on disk, and whether zhuyin was read. A file is looked at again when
+/// either changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileStamp {
     /// The modification time in nanoseconds since the unix epoch.
     pub mtime: i64,
     pub size: i64,
+    pub zhuyin: bool,
 }
 
 impl FileStamp {
-    pub fn of(path: &Path) -> anyhow::Result<Self> {
+    pub fn of(path: &Path, zhuyin: bool) -> anyhow::Result<Self> {
         let metadata = std::fs::metadata(path)?;
         Ok(Self {
             mtime: metadata.modified()?.duration_since(UNIX_EPOCH)?.as_nanos() as i64,
             size: metadata.len() as i64,
+            zhuyin,
         })
     }
 }
@@ -39,7 +42,7 @@ impl Index {
     const FILE_NAME: &'static str = "index.sqlite";
     /// To be raised whenever the tables or the recognition models change. An index of another version is emptied
     /// and fills again as files get indexed.
-    const VERSION: i32 = 1;
+    const VERSION: i32 = 2;
     // The stamp of a file is zero until all of its units are indexed.
     const SCHEMA: &'static str = "
         PRAGMA foreign_keys = ON;
@@ -47,7 +50,8 @@ impl Index {
             id INTEGER PRIMARY KEY,
             path TEXT UNIQUE NOT NULL,
             mtime INTEGER NOT NULL DEFAULT 0,
-            size INTEGER NOT NULL DEFAULT 0
+            size INTEGER NOT NULL DEFAULT 0,
+            zhuyin INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS units (
             id INTEGER PRIMARY KEY,
@@ -97,8 +101,9 @@ impl Index {
     /// Whether the file is fully indexed in the given state.
     pub fn is_current(&self, path: &Path, stamp: FileStamp) -> anyhow::Result<bool> {
         Ok(self.conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM files WHERE path = ?1 AND mtime = ?2 AND size = ?3)",
-            params![path_str(path)?, stamp.mtime, stamp.size],
+            "SELECT EXISTS (SELECT 1 FROM files
+             WHERE path = ?1 AND mtime = ?2 AND size = ?3 AND zhuyin = ?4)",
+            params![path_str(path)?, stamp.mtime, stamp.size, stamp.zhuyin],
             |row| row.get(0),
         )?)
     }
@@ -181,8 +186,8 @@ impl Index {
             };
         }
         tx.execute(
-            "UPDATE files SET mtime = ?1, size = ?2 WHERE id = ?3",
-            params![stamp.mtime, stamp.size, file_id],
+            "UPDATE files SET mtime = ?1, size = ?2, zhuyin = ?3 WHERE id = ?4",
+            params![stamp.mtime, stamp.size, stamp.zhuyin, file_id],
         )?;
         tx.commit()?;
         Ok(())
@@ -206,7 +211,8 @@ impl Index {
     /// Finds the query in all indexed lines, the best hits first.
     ///
     /// A line matches where the characters of the query appear in a row, each among the candidates of its position.
-    /// Whitespace and zhuyin tone marks are ignored and letter case does not matter.
+    /// Whitespace and zhuyin tone marks are ignored and letter case does not matter. A query without zhuyin also
+    /// matches across zhuyin symbols, which is what ruby zhuyin beside characters is read as.
     pub fn search(&self, query: &str) -> anyhow::Result<Vec<Hit>> {
         let query = query
             .chars()
@@ -216,6 +222,8 @@ impl Index {
         if query.is_empty() {
             return Ok(Vec::new());
         }
+
+        let query_has_zhuyin = query.iter().any(|&c| is_zhuyin(c));
 
         let mut hits = Vec::new();
         let mut select = self.conn.prepare(
@@ -229,12 +237,28 @@ impl Index {
                 .iter()
                 .filter(|c| c.top().is_some_and(|ch| !is_ignored(ch)))
                 .collect::<Vec<&CharBox>>();
+            // Ruby zhuyin beside characters is read as zhuyin symbols in between them. So a query without
+            // zhuyin is also tried on the line with its zhuyin left out.
+            let without_zhuyin = chars
+                .iter()
+                .copied()
+                .filter(|c| !c.top().is_some_and(is_zhuyin))
+                .collect::<Vec<&CharBox>>();
+            let mut sequences = vec![&chars];
+            if !query_has_zhuyin && without_zhuyin.len() < chars.len() {
+                sequences.push(&without_zhuyin);
+            }
 
-            for window in chars.windows(query.len()) {
+            let mut found = Vec::new();
+            for window in sequences.iter().flat_map(|s| s.windows(query.len())) {
                 let Some(score) = match_score(window, &query) else {
                     continue;
                 };
                 let (x0, x1) = (window[0].x0, window[window.len() - 1].x1);
+                if found.contains(&(x0, x1)) {
+                    continue;
+                }
+                found.push((x0, x1));
                 hits.push(Hit {
                     path: PathBuf::from(row.get::<_, String>(0)?),
                     page: row.get(1)?,
@@ -290,6 +314,10 @@ fn is_ignored(c: char) -> bool {
     c.is_whitespace() || matches!(c, 'ˊ' | 'ˇ' | 'ˋ' | '˙')
 }
 
+fn is_zhuyin(c: char) -> bool {
+    ('\u{3105}'..='\u{312F}').contains(&c)
+}
+
 fn fold_case(c: char) -> char {
     c.to_lowercase().next().unwrap_or(c)
 }
@@ -305,7 +333,11 @@ mod tests {
     use crate::{Candidate, Source};
 
     const PATH: &str = "/notes/a.rnote";
-    const STAMP: FileStamp = FileStamp { mtime: 7, size: 7 };
+    const STAMP: FileStamp = FileStamp {
+        mtime: 7,
+        size: 7,
+        zhuyin: false,
+    };
     const BOUNDS: Bounds = Bounds {
         x: 0.0,
         y: 5.0,
@@ -385,11 +417,37 @@ mod tests {
     }
 
     #[test]
+    fn a_file_read_without_zhuyin_is_not_current_with_it() {
+        let index = index_with(vec![typed("text", BOUNDS)]);
+        let path = Path::new(PATH);
+        assert!(index.is_current(path, STAMP).unwrap());
+        let with_zhuyin = FileStamp {
+            zhuyin: true,
+            ..STAMP
+        };
+        assert!(!index.is_current(path, with_zhuyin).unwrap());
+    }
+
+    #[test]
     fn ignores_tone_marks() {
         let index = index_with(vec![typed("ㄇㄚˇ ㄇㄚ˙", BOUNDS)]);
         assert_eq!(index.search("ㄇㄚㄇㄚ").unwrap().len(), 1);
         assert_eq!(index.search("ㄇㄚˋㄇㄚ").unwrap().len(), 1);
         assert!(index.search("ˇ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_query_without_zhuyin_matches_across_ruby_zhuyin() {
+        let index = index_with(vec![typed("老ㄌ師ㄕ好", BOUNDS)]);
+        let hits = index.search("老師").unwrap();
+        assert_eq!(hits.len(), 1);
+        // From the start of 老 to the end of 師
+        assert_eq!((hits[0].bounds.x, hits[0].bounds.w), (0.0, 18.0));
+        // Found once, though it matches with and without the zhuyin left out
+        assert_eq!(index.search("師").unwrap().len(), 1);
+        // A query with zhuyin is matched as it is
+        assert_eq!(index.search("ㄌ師").unwrap().len(), 1);
+        assert!(index.search("ㄌㄕ").unwrap().is_empty());
     }
 
     #[test]
@@ -426,7 +484,11 @@ mod tests {
         let lines = vec![typed("kept", BOUNDS), typed("gone", BOUNDS)];
         let mut index = index_with(lines);
         let path = Path::new(PATH);
-        let changed = FileStamp { mtime: 8, size: 8 };
+        let changed = FileStamp {
+            mtime: 8,
+            size: 8,
+            zhuyin: false,
+        };
 
         // Unit 0 is unchanged but now on another page, unit 1 no longer exists
         index.finish_file(path, changed, &[unit(0, 4)]).unwrap();

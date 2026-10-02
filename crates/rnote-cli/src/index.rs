@@ -17,7 +17,7 @@ const RENDER_SCALE: f64 = 2.0;
 /// Units that would render larger than this are rendered with a smaller scale-factor, to bound the memory.
 const RENDER_MAX_SIDE: f64 = 4096.0;
 
-pub(crate) async fn run_index(paths: &[PathBuf]) -> anyhow::Result<()> {
+pub(crate) async fn run_index(paths: &[PathBuf], zhuyin: bool) -> anyhow::Result<()> {
     let mut index = Index::open()?;
     let removed = index.remove_missing()?;
     if removed > 0 {
@@ -29,7 +29,7 @@ pub(crate) async fn run_index(paths: &[PathBuf]) -> anyhow::Result<()> {
     let mut failed = 0;
     for rnote_file in rnote_files(paths)? {
         let file_disp = rnote_file.display().to_string();
-        let stamp = FileStamp::of(&rnote_file)?;
+        let stamp = FileStamp::of(&rnote_file, zhuyin)?;
         if index.is_current(&rnote_file, stamp)? {
             continue;
         }
@@ -118,7 +118,8 @@ async fn index_file(
     let mut n_read = 0;
     for (i, text_unit) in text_units.iter().enumerate() {
         let unit = Unit {
-            hash: text_unit.content_hash()?,
+            // What is read from a unit depends on whether zhuyin is read
+            hash: text_unit.content_hash()?.wrapping_add(stamp.zhuyin as u64),
             page: text_unit.page as u32,
             source: match text_unit.layer {
                 TextLayer::Ink => Source::Ink,
@@ -137,7 +138,7 @@ async fn index_file(
                 i + 1,
                 text_units.len()
             ));
-            let lines = read_unit(recognizer, text_unit)?;
+            let lines = read_unit(recognizer, text_unit, stamp.zhuyin)?;
             index.insert_unit(rnote_file, unit, &lines)?;
             n_read += 1;
         }
@@ -151,6 +152,7 @@ async fn index_file(
 fn read_unit(
     recognizer: &mut Option<Recognizer>,
     text_unit: &TextUnit,
+    zhuyin: bool,
 ) -> anyhow::Result<Vec<Line>> {
     if text_unit.layer == TextLayer::Typed {
         let mut lines = Vec::new();
@@ -197,7 +199,7 @@ fn read_unit(
     let origin = image.rectangle.bounds().mins;
     let recognizer = match recognizer {
         Some(recognizer) => recognizer,
-        None => recognizer.insert(Recognizer::new()?),
+        None => recognizer.insert(Recognizer::new(zhuyin)?),
     };
     Ok(recognizer
         .recognize(&flatten(image)?)?

@@ -13,13 +13,16 @@ use ort::value::Tensor;
 const DET_MODEL: &[u8] = include_bytes!("../models/pp-ocrv5_mobile_det.onnx");
 const REC_MODEL: &[u8] = include_bytes!("../models/pp-ocrv5_mobile_rec.onnx");
 const DICT: &str = include_str!("../models/ppocrv5_dict.txt");
+const ZHUYIN_DICT: &str = include_str!("../models/zhuyin_dict.txt");
 
 /// Finds and reads the text lines of an image.
 #[derive(Debug)]
 pub struct Recognizer {
     det: Session,
     rec: Session,
-    /// The character of each recognition class. Class 0 is the blank.
+    /// The output of the recognition model that is read.
+    rec_output: &'static str,
+    /// The character of each class of that output. Class 0 is the blank.
     classes: Vec<char>,
 }
 
@@ -41,16 +44,22 @@ impl Recognizer {
     const MIN_CANDIDATE_CONFIDENCE: f32 = 0.01;
 
     /// Loads the models.
-    pub fn new() -> anyhow::Result<Self> {
+    ///
+    /// The recognition model has two outputs. The plain one is the model as published. The one with `zhuyin` has
+    /// extra classes for the zhuyin symbols and tone marks; it is experimental, as a zhuyin symbol can take the
+    /// place of a character that looks like it.
+    pub fn new(zhuyin: bool) -> anyhow::Result<Self> {
         // Blank, then one class per dictionary line, then the space.
+        let dict = DICT.lines().chain(ZHUYIN_DICT.lines().filter(|_| zhuyin));
         let classes = std::iter::once('\0')
-            .chain(DICT.lines().filter_map(|l| l.chars().next()))
+            .chain(dict.filter_map(|l| l.chars().next()))
             .chain(std::iter::once(' '))
             .collect();
 
         Ok(Self {
             det: load_session(DET_MODEL).context("Loading the detection model failed.")?,
             rec: load_session(REC_MODEL).context("Loading the recognition model failed.")?,
+            rec_output: if zhuyin { "zhuyin" } else { "fetch_name_0" },
             classes,
         })
     }
@@ -126,7 +135,7 @@ impl Recognizer {
 
         let input = bgr_planes(&resized, |value, _| (value / 255.0 - 0.5) / 0.5)?;
         let outputs = self.rec.run(ort::inputs![input])?;
-        let (shape, probabilities) = outputs[0].try_extract_tensor::<f32>()?;
+        let (shape, probabilities) = outputs[self.rec_output].try_extract_tensor::<f32>()?;
         let n_classes = shape[2] as usize;
         if n_classes != self.classes.len() {
             anyhow::bail!(
