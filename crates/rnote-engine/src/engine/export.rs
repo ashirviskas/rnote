@@ -2,12 +2,15 @@
 use super::{Engine, StrokeContent};
 use crate::fileformats::rnoteformat::RnoteFile;
 use crate::fileformats::{FileFormatSaver, xoppformat};
+use crate::strokes::Stroke;
 use anyhow::Context;
 use futures::channel::oneshot;
 use p2d::math::Vector2;
 use rayon::prelude::*;
 use rnote_compose::SplitOrder;
 use rnote_compose::Transformable;
+use rnote_compose::ext::AabbExt;
+use rnote_compose::shapes::Shapeable;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use std::sync::Arc;
@@ -313,6 +316,26 @@ pub struct ExportPrefs {
     pub selection_export_prefs: SelectionExportPrefs,
 }
 
+/// How the text of a [TextUnit] can be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextLayer {
+    /// Handwriting and shapes of one page.
+    Ink,
+    /// One image, for example an imported Pdf page.
+    Image,
+    /// One typed text. It needs no recognition, see [TextStroke::lines](crate::strokes::TextStroke::lines).
+    Typed,
+}
+
+/// A part of the document whose text is read on its own.
+#[derive(Debug, Clone)]
+pub struct TextUnit {
+    /// The index of the page the unit is on.
+    pub page: usize,
+    pub layer: TextLayer,
+    pub content: StrokeContent,
+}
+
 impl Engine {
     /// The used image scale-factor for any strokes that are converted to bitmap images on export.
     pub const STROKE_EXPORT_IMAGE_SCALE: f64 = 1.8;
@@ -369,6 +392,69 @@ impl Engine {
                     .with_background(self.document.config.background)
             })
             .collect()
+    }
+
+    /// Extract the document content as the units its text is read in.
+    ///
+    /// Ink and images are separate units, so handwriting on top of an image does not disturb reading either.
+    /// An image is a unit of its own instead of a part of a page, so its text lines are not cut at page borders.
+    pub fn extract_text_units(&self, page_order: SplitOrder) -> Vec<TextUnit> {
+        let pages = self
+            .document
+            .bounds()
+            .split_extended_origin_aligned(self.document.config.format.size(), page_order);
+        let content = |strokes, bounds| {
+            StrokeContent::default()
+                .with_strokes(strokes)
+                .with_bounds(bounds)
+                .with_background(self.document.config.background)
+        };
+
+        let mut units = Vec::new();
+        for (page, &bounds) in pages.iter().enumerate() {
+            let ink = self
+                .store
+                .get_strokes_arc(
+                    &self
+                        .store
+                        .stroke_keys_as_rendered_intersecting_bounds(bounds),
+                )
+                .into_iter()
+                .filter(|stroke| {
+                    matches!(
+                        stroke.as_ref(),
+                        Stroke::BrushStroke(_) | Stroke::ShapeStroke(_)
+                    )
+                })
+                .collect::<Vec<Arc<Stroke>>>();
+            if !ink.is_empty() {
+                units.push(TextUnit {
+                    page,
+                    layer: TextLayer::Ink,
+                    content: content(ink, bounds),
+                });
+            }
+        }
+        for stroke in self
+            .store
+            .get_strokes_arc(&self.store.stroke_keys_as_rendered())
+        {
+            let layer = match stroke.as_ref() {
+                Stroke::VectorImage(_) | Stroke::BitmapImage(_) => TextLayer::Image,
+                Stroke::TextStroke(_) => TextLayer::Typed,
+                Stroke::BrushStroke(_) | Stroke::ShapeStroke(_) => continue,
+            };
+            let bounds = stroke.bounds();
+            units.push(TextUnit {
+                page: pages
+                    .iter()
+                    .position(|page| page.contains_local_point(bounds.center()))
+                    .unwrap_or(0),
+                layer,
+                content: content(vec![stroke], bounds),
+            });
+        }
+        units
     }
 
     pub fn extract_selection_content(&self) -> Option<StrokeContent> {

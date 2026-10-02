@@ -1,0 +1,26 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+name = "rnote-ocr"
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+image = { workspace = true, optional = true }
+ort = { workspace = true, optional = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+default = []
+# Pulls in the model runtime. Only enabled by the cli, so the ui never links it.
+recognize = ["dep:image", "dep:ort"]
+
+[[example]]
+name = "recognize"
+required-features = ["recognize"]

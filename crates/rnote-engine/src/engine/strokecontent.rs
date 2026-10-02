@@ -1,5 +1,6 @@
 // Imports
 use crate::Drawable;
+use crate::Image;
 use crate::Svg;
 use crate::document::Background;
 use crate::strokes::Stroke;
@@ -95,6 +96,40 @@ impl StrokeContent {
             warn!("Simplifying Svg while generating StrokeContent Svg failed, Err: {e:?}");
         };
         Ok(Some(svg))
+    }
+
+    /// Generate a bitmap image from the content.
+    ///
+    /// Draws directly onto the image. This is much faster than `gen_svg()` followed by `gen_image()`
+    /// when the content holds vector images.
+    ///
+    /// Returns Ok(None) if there is no content stored.
+    pub fn gen_image(
+        &self,
+        draw_background: bool,
+        draw_pattern: bool,
+        optimize_printing: bool,
+        margin: f64,
+        image_scale: f64,
+    ) -> anyhow::Result<Option<Image>> {
+        let Some(bounds_loosened) = self.bounds().map(|b| b.loosened(margin)) else {
+            return Ok(None);
+        };
+        let image = Image::gen_with_cairo(
+            |cairo_cx| {
+                self.draw_to_cairo(
+                    cairo_cx,
+                    draw_background,
+                    draw_pattern,
+                    optimize_printing,
+                    margin,
+                    image_scale,
+                )
+            },
+            bounds_loosened,
+            image_scale,
+        )?;
+        Ok(Some(image))
     }
 
     pub fn draw_to_cairo(

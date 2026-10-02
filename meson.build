@@ -89,6 +89,7 @@ meson.add_dist_script(
 # core crates
 subdir('crates/rnote-compose')
 subdir('crates/rnote-engine')
+subdir('crates/rnote-ocr')
 
 # cargo fmt check
 run_target(
