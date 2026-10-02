@@ -226,19 +226,6 @@ test:
 test-file-compatibility:
     {{ build_folder }}/target/debug/rnote-cli test misc/file-tests/*.rnote
 
-[doc('Downloads the text recognition models (PP-OCRv5 mobile, about 21 MB) into the data directory.
-They are needed by `rnote-cli index`.')]
-ocr-models:
-    #!/usr/bin/env bash
-    set -euxo pipefail
-    dir="${XDG_DATA_HOME:-$HOME/.local/share}/rnote/ocr"
-    url="https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.4.0"
-    mkdir -p "$dir"
-    curl -L --fail -o "$dir/pp-ocrv5_mobile_det.onnx" "$url/onnx/PP-OCRv5/det/ch_PP-OCRv5_mobile_det.onnx"
-    curl -L --fail -o "$dir/pp-ocrv5_mobile_rec.onnx" "$url/onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile_infer.onnx"
-    curl -L --fail -o "$dir/ppocrv5_dict.txt" \
-        "$url/paddle/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile_infer/ppocrv5_dict.txt"
-
 generate-docs:
     meson compile ui-cargo-doc -C {{ build_folder }}
     meson compile cli-cargo-doc -C {{ build_folder }}
