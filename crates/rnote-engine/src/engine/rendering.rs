@@ -8,6 +8,15 @@ use rnote_compose::color;
 use tracing::error;
 
 impl Engine {
+    /// The fill of search hits. Translucent, so the text below stays readable.
+    #[cfg(feature = "ui")]
+    const SEARCH_HIGHLIGHT_COLOR: rnote_compose::Color = rnote_compose::Color {
+        r: 0.96,
+        g: 0.83,
+        b: 0.18,
+        a: 0.4,
+    };
+
     /// Update the background rendering for the current viewport.
     ///
     /// If the background pattern or zoom has changed, the background pattern needs to be regenerated first.
@@ -167,6 +176,7 @@ impl Engine {
         use crate::engine::visual_debug;
         use crate::engine_view;
         use gtk4::prelude::*;
+        use p2d::bounding_volume::BoundingVolume;
 
         let doc_bounds = self.document.bounds();
         let viewport = self.camera.viewport();
@@ -180,6 +190,17 @@ impl Engine {
         self.draw_origin_indicator_to_gtk_snapshot(snapshot)?;
         self.store
             .draw_strokes_to_gtk_snapshot(snapshot, doc_bounds, viewport);
+        for bounds in self
+            .search_highlights
+            .iter()
+            .filter(|bounds| bounds.intersects(&viewport))
+        {
+            visual_debug::draw_fill_to_gtk_snapshot(
+                snapshot,
+                *bounds,
+                Self::SEARCH_HIGHLIGHT_COLOR,
+            );
+        }
         snapshot.restore();
         /*
                let cairo_cx = snapshot.append_cairo(&graphene::Rect::from_p2d_aabb(surface_bounds));

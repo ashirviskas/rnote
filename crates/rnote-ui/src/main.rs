@@ -23,6 +23,7 @@ pub(crate) mod filetype;
 pub(crate) mod globals;
 pub(crate) mod groupediconpicker;
 pub(crate) mod iconpicker;
+pub(crate) mod indexer;
 pub(crate) mod mainheader;
 pub(crate) mod overlays;
 pub(crate) mod penpicker;

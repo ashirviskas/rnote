@@ -1,5 +1,5 @@
 // Imports
-use crate::{create, export, import, test, thumbnail};
+use crate::{create, export, import, index, search, test, thumbnail};
 use anyhow::Context;
 use clap::Parser;
 use rnote_compose::SplitOrder;
@@ -92,6 +92,19 @@ pub(crate) enum Command {
     Create {
         /// The new rnote file path.
         rnote_file: PathBuf,
+    },
+    /// Reads the text of rnote files (handwriting, images, typed text) and adds it to the search index.{n}
+    /// Only the parts of a file that changed since it was last indexed are read again.
+    Index {
+        /// The rnote files or folders. Folders are searched for rnote files recursively.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
+    /// Searches the text of all indexed rnote files. Prints the file, the page and the text of each hit.
+    Search {
+        /// The text to search for. Whitespace and letter case are ignored.
+        #[arg(required = true)]
+        query: Vec<String>,
     },
 }
 
@@ -290,6 +303,12 @@ pub(crate) async fn run() -> anyhow::Result<()> {
             println!("Creating new file..");
             create::run_create(&new_rnote_file).await?;
             println!("File creation finished!");
+        }
+        Command::Index { paths } => {
+            index::run_index(&paths).await?;
+        }
+        Command::Search { query } => {
+            search::run_search(&query.concat())?;
         }
     }
 

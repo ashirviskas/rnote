@@ -214,6 +214,10 @@ pub struct Engine {
     #[cfg(feature = "ui")]
     #[serde(skip)]
     origin_indicator_rendernode: Option<gtk4::gsk::RenderNode>,
+    /// Bounds on the document that are highlighted as search hits.
+    #[cfg(feature = "ui")]
+    #[serde(skip)]
+    search_highlights: Vec<Aabb>,
 }
 
 impl Default for Engine {
@@ -238,6 +242,8 @@ impl Default for Engine {
             origin_indicator_image: None,
             #[cfg(feature = "ui")]
             origin_indicator_rendernode: None,
+            #[cfg(feature = "ui")]
+            search_highlights: Vec::new(),
         }
     }
 }
@@ -314,6 +320,15 @@ impl Engine {
 
     pub fn optimize_epd(&self) -> bool {
         self.config.read().optimize_epd
+    }
+
+    /// Sets the bounds on the document that are highlighted as search hits. An empty vec clears the highlights.
+    #[cfg(feature = "ui")]
+    pub fn set_search_highlights(&mut self, search_highlights: Vec<Aabb>) -> WidgetFlags {
+        let mut widget_flags = WidgetFlags::default();
+        self.search_highlights = search_highlights;
+        widget_flags.redraw = true;
+        widget_flags
     }
 
     /// Takes a snapshot of the current state.
