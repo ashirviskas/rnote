@@ -109,16 +109,18 @@ impl RnWorkspaceBrowser {
                 .map(|name| name.to_string_lossy().to_string())
                 .unwrap_or_default();
             let row = adw::ActionRow::builder()
-                .use_markup(false)
-                .title(hit.text.as_str())
-                .subtitle(format!(
-                    "{file_name} · {} {}",
-                    gettext("Page"),
-                    hit.page + 1
-                ))
                 .title_lines(2)
                 .activatable(true)
                 .build();
+            // Recognised text is full of `<` and `&`. Markup has to be off before the texts are set, which the
+            // builder does not guarantee when it is given all of them at once.
+            row.set_use_markup(false);
+            row.set_title(&hit.text);
+            row.set_subtitle(&format!(
+                "{file_name} · {} {}",
+                gettext("Page"),
+                hit.page + 1
+            ));
             imp.search_results_listbox.append(&row);
         }
         imp.search_hits.replace(hits);

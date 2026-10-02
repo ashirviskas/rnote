@@ -1,20 +1,18 @@
 //! Recognises one image and prints its lines with their character boxes.
 //!
-//! Usage: `cargo run -p rnote-ocr --features recognize --example recognize -- <image>`
+//! Usage: `cargo run -p rnote-ocr --features recognize --example recognize -- <image> [--zhuyin]`
 
 use rnote_ocr::Recognizer;
 use std::path::PathBuf;
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
-    let image_path = PathBuf::from(
-        std::env::args_os()
-            .nth(1)
-            .expect("Usage: recognize <image>"),
-    );
+    let mut args = std::env::args_os().skip(1);
+    let image_path = PathBuf::from(args.next().expect("Usage: recognize <image> [--zhuyin]"));
+    let zhuyin = args.next().is_some_and(|arg| arg == "--zhuyin");
 
     let image = image::open(&image_path)?.into_rgb8();
-    let mut recognizer = Recognizer::new()?;
+    let mut recognizer = Recognizer::new(zhuyin)?;
     let start = Instant::now();
     let lines = recognizer.recognize(&image)?;
     let elapsed = start.elapsed();

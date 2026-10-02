@@ -75,14 +75,15 @@ through the `ort` crate, which downloads a prebuilt runtime at build time.
 One SQLite file, `index.sqlite`, in `$XDG_DATA_HOME/rnote/ocr/` (usually `~/.local/share/rnote/ocr/`).
 
 ```
-files (id, path, mtime, size)            one row per indexed file
+files (id, path, mtime, size, zhuyin)    one row per indexed file
 units (id, file_id, hash, page, source)  one row per unit of a file
 lines (id, unit_id, x, y, w, h, text, chars)
 ```
 
 - `chars` is the JSON of the line's `CharBox`es, `text` its most likely reading.
 - All positions are in document coordinates, so a hit can be shown on the canvas directly.
-- A file whose `mtime` and `size` match is skipped without being loaded.
+- A file whose `mtime`, `size` and zhuyin option match is skipped without being loaded.
+- The index has a version (`Index::VERSION`). An index of another version is emptied and fills again.
 - Units are written as they are finished. A file's `mtime` and `size` are only set once all of its units are in, so an
   interrupted run continues where it stopped.
 - Files that no longer exist are removed on the next `rnote-cli index` run.
@@ -90,13 +91,44 @@ lines (id, unit_id, x, y, w, h, text, chars)
 ## Search
 
 `Index::search(query)` goes through all lines. A line matches where the characters of the query appear in a row, each
-among the candidates of its position. Whitespace and letter case are ignored. A hit covers exactly the matched
+among the candidates of its position. Whitespace, letter case and zhuyin tone marks are ignored. A hit covers exactly the matched
 characters. Hits on the most likely readings rank first, then by confidence.
+
+## Zhuyin (experimental)
+
+The recognition model file has a second output with 41 extra classes for the zhuyin symbols and tone marks.
+`rnote-cli index --zhuyin`, or "Read Zhuyin (experimental)" in the app's settings, reads that output; it is off by
+default, and the default reads exactly what the published model reads.
+
+With it on, horizontal zhuyin is read, handwritten and printed. The cost: a zhuyin symbol can become the first
+reading of a character that looks like it (about 0.4% of the characters of ordinary text in unfamiliar fonts). The
+character nearly always stays as a second reading, so it is still found. Search ignores tone marks, and a query
+without zhuyin also matches across zhuyin symbols: ruby zhuyin beside printed characters comes out as such symbols
+between them. Switching the
+option makes files be read again when they are next indexed. Details and measurements:
+[misc/zhuyin](../../misc/zhuyin/README.md).
+
+## Memory
+
+Measured with a debug build on a 4-core laptop, two threads used.
+
+| What | Additional memory |
+|---|---|
+| The app (`rnote`) | None for recognition: it never loads the models. Searching opens the SQLite index, a few MB |
+| `rnote-cli search` | 22 MB in total for the process |
+| `rnote-cli index`, models loaded | 80 MB |
+| `rnote-cli index`, while reading a page | about 110 MB more, at the 960 px detection size. About 200 MB in total for recognition |
+| `rnote-cli index`, loading the document | Depends on the file. A small note: 275 MB peak for the whole process. A 50 MB note with a 112-page Pdf: 800 MB peak, of which about 630 MB is the loaded document |
+| Size of `rnote-cli` on disk | 21 MB more, the compiled-in models |
+
+The indexer is a separate process that the app starts for one file at a time; all of the above is given back when it
+exits. A file that did not change is skipped without being loaded (20 MB, 0.04 s).
 
 ## Limits
 
 - Text on an arc or at a steep angle is not found, line boxes are axis-aligned.
-- Zhuyin (bopomofo) is not in the model's dictionary and is read as look-alike characters.
+- Zhuyin (bopomofo) is not in the model's dictionary and is read as look-alike characters, unless the experimental
+  zhuyin option is on (see below). Vertical zhuyin is not read either way.
 - Search does not cross line breaks.
 - A moved or renamed file is read again in full.
 

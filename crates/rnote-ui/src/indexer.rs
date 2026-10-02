@@ -4,9 +4,10 @@
 //! back when the cli exits.
 
 // Imports
+use crate::RnApp;
 use futures::StreamExt;
 use futures::channel::mpsc;
-use gtk4::{gio, glib};
+use gtk4::{gio, glib, prelude::*};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use tracing::warn;
@@ -48,11 +49,20 @@ async fn index(rnote_file: &Path) -> anyhow::Result<()> {
         PathBuf::from(cli_name)
     };
 
-    gio::Subprocess::newv(
-        &[cli.as_os_str(), OsStr::new("index"), rnote_file.as_os_str()],
-        gio::SubprocessFlags::STDOUT_SILENCE,
-    )?
-    .wait_check_future()
-    .await?;
+    let mut args = vec![cli.as_os_str(), OsStr::new("index"), rnote_file.as_os_str()];
+    if search_zhuyin() {
+        args.push(OsStr::new("--zhuyin"));
+    }
+    gio::Subprocess::newv(&args, gio::SubprocessFlags::STDOUT_SILENCE)?
+        .wait_check_future()
+        .await?;
     Ok(())
+}
+
+/// The experimental setting to also read zhuyin.
+fn search_zhuyin() -> bool {
+    gio::Application::default()
+        .and_downcast::<RnApp>()
+        .and_then(|app| app.app_settings())
+        .is_some_and(|settings| settings.boolean("search-zhuyin"))
 }

@@ -42,6 +42,8 @@ mod imp {
         #[template_child]
         pub(crate) general_autosave_interval_secs_row: TemplateChild<adw::SpinRow>,
         #[template_child]
+        pub(crate) general_search_zhuyin_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
         pub(crate) general_show_scrollbars_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
         pub(crate) general_optimize_epd_row: TemplateChild<adw::SwitchRow>,
@@ -395,6 +397,10 @@ impl RnSettingsPanel {
 
     pub(crate) fn general_drawing_cursor_picker(&self) -> RnIconPicker {
         self.imp().general_drawing_cursor_picker.clone()
+    }
+
+    pub(crate) fn general_search_zhuyin_row(&self) -> adw::SwitchRow {
+        self.imp().general_search_zhuyin_row.clone()
     }
 
     pub(crate) fn general_show_scrollbars_row(&self) -> adw::SwitchRow {
