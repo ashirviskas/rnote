@@ -12,6 +12,7 @@ use rnote_compose::Transformable;
 use rnote_compose::ext::AabbExt;
 use rnote_compose::shapes::Shapeable;
 use serde::{Deserialize, Serialize};
+use std::hash::{DefaultHasher, Hasher};
 use std::io::Cursor;
 use std::sync::Arc;
 use tracing::error;
@@ -334,6 +335,28 @@ pub struct TextUnit {
     pub page: usize,
     pub layer: TextLayer,
     pub content: StrokeContent,
+}
+
+impl TextUnit {
+    /// A hash of the content. It stays the same for as long as nothing changes what the unit looks like.
+    pub fn content_hash(&self) -> anyhow::Result<u64> {
+        struct HashWriter(DefaultHasher);
+
+        impl std::io::Write for HashWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.write(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = HashWriter(DefaultHasher::new());
+        serde_json::to_writer(&mut writer, &self.content)?;
+        Ok(writer.0.finish())
+    }
 }
 
 impl Engine {

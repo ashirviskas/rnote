@@ -89,6 +89,14 @@
               </object>
             </child>
             <child>
+              <object class="GtkSearchEntry" id="search_entry">
+                <property name="placeholder-text" translatable="yes">Search in Notes</property>
+                <property name="margin-bottom">6</property>
+                <property name="margin-start">6</property>
+                <property name="margin-end">6</property>
+              </object>
+            </child>
+            <child>
               <object class="GtkSeparator">
                 <property name="orientation">horizontal</property>
               </object>
@@ -155,6 +163,28 @@
         </child>
       </object>
     </child>
+    <!-- Takes the place of the files listview while searching -->
+    <object class="GtkListBox" id="search_results_listbox">
+      <property name="selection-mode">none</property>
+      <property name="valign">start</property>
+      <property name="margin-top">6</property>
+      <property name="margin-bottom">6</property>
+      <property name="margin-start">6</property>
+      <property name="margin-end">6</property>
+      <style>
+        <class name="boxed-list" />
+      </style>
+      <child type="placeholder">
+        <object class="GtkLabel">
+          <property name="label" translatable="yes">No Results</property>
+          <property name="margin-top">12</property>
+          <property name="margin-bottom">12</property>
+          <style>
+            <class name="dim-label" />
+          </style>
+        </object>
+      </child>
+    </object>
     <object class="GtkPopoverMenu" id="dir_controls_actions_popover">
       <property name="menu-model">workspace_dir_actions_menu_model</property>
       <menu id="workspace_dir_actions_menu_model">

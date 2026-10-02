@@ -51,6 +51,7 @@ crates/rnote-ui/src/workspacebrowser/filerow/actions/duplicate.rs
 crates/rnote-ui/src/workspacebrowser/filerow/actions/open_in_default_app.rs
 crates/rnote-ui/src/workspacebrowser/filerow/actions/open.rs
 crates/rnote-ui/src/workspacebrowser/filerow/actions/rename.rs
+crates/rnote-ui/src/workspacebrowser/search.rs
 crates/rnote-ui/src/workspacebrowser/filerow/actions/trash.rs
 crates/rnote-ui/src/workspacebrowser/workspaceactions/createfolder.rs
 crates/rnote-ui/src/workspacebrowser/mod.rs

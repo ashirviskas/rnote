@@ -7,6 +7,8 @@ pub(crate) mod cli;
 pub(crate) mod create;
 pub(crate) mod export;
 pub(crate) mod import;
+pub(crate) mod index;
+pub(crate) mod search;
 pub(crate) mod test;
 pub(crate) mod thumbnail;
 pub(crate) mod validators;
