@@ -32,6 +32,7 @@ The crate has two parts:
 | Module | Feature | Used by | What it does |
 |---|---|---|---|
 | `index` | always built | `rnote-cli`, `rnote-ui` | SQLite index: store lines per unit, search |
+| `query` | always built | `rnote-ui`, `index` | Match a query against a line |
 | `recognize` | `recognize` | `rnote-cli` only | Find text lines in an image and read them |
 
 `rnote-ui` depends on this crate without the `recognize` feature. The models and the model runtime are therefore only
@@ -90,6 +91,9 @@ lines (id, unit_id, x, y, w, h, text, chars)
 - Files that no longer exist are removed on the next `rnote-cli index` run.
 
 ## Search
+
+Matching lives in `Query` (`query.rs`), so the app uses the same rules to search the text the open document
+carries (typed text, Pdf text) without going through the index.
 
 `Index::search(query)` goes through all lines. A line matches where the characters of the query appear in a row, each
 among the candidates of its position. Whitespace, letter case and zhuyin tone marks are ignored. A hit covers exactly the matched

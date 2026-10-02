@@ -17,6 +17,14 @@ impl Engine {
         a: 0.4,
     };
 
+    #[cfg(feature = "ui")]
+    const SEARCH_HIGHLIGHT_OUTLINE_COLOR: rnote_compose::Color = rnote_compose::Color {
+        r: 0.9,
+        g: 0.38,
+        b: 0.0,
+        a: 0.9,
+    };
+
     /// Update the background rendering for the current viewport.
     ///
     /// If the background pattern or zoom has changed, the background pattern needs to be regenerated first.
@@ -199,6 +207,13 @@ impl Engine {
                 snapshot,
                 *bounds,
                 Self::SEARCH_HIGHLIGHT_COLOR,
+            );
+            // An outline, as the fill alone is hard to see on a colored page
+            visual_debug::draw_bounds_to_gtk_snapshot(
+                bounds.loosened(1.5 / self.camera.total_zoom()),
+                Self::SEARCH_HIGHLIGHT_OUTLINE_COLOR,
+                snapshot,
+                1.5 / self.camera.total_zoom(),
             );
         }
         snapshot.restore();
