@@ -3,7 +3,7 @@ use super::Content;
 use crate::{Camera, Drawable};
 use itertools::Itertools;
 use kurbo::Shape;
-use p2d::bounding_volume::Aabb;
+use p2d::bounding_volume::{Aabb, BoundingVolume};
 use p2d::glamx::DAffine2;
 use p2d::math::Vector2;
 use piet::{RenderContext, TextLayout, TextLayoutBuilder};
@@ -539,6 +539,14 @@ impl Drawable for TextStroke {
     }
 }
 
+/// A line of a [TextStroke] as it is laid out.
+#[derive(Debug, Clone)]
+pub struct TextLine {
+    pub text: String,
+    /// The bounds of the line on the document.
+    pub bounds: Aabb,
+}
+
 impl TextStroke {
     pub fn new(text: String, upper_left_pos: Vector2, text_style: TextStyle) -> Self {
         Self {
@@ -546,6 +554,30 @@ impl TextStroke {
             affine: DAffine2::from_translation(upper_left_pos),
             text_style,
         }
+    }
+
+    /// The lines of the text as they are laid out, without the empty ones.
+    pub fn lines(&self) -> anyhow::Result<Vec<TextLine>> {
+        let text_layout = self
+            .text_style
+            .build_text_layout(&mut piet_cairo::CairoText::new(), self.text.clone())?;
+
+        Ok((0..text_layout.line_count())
+            .filter_map(|line| {
+                let metric = text_layout.line_metric(line)?;
+                let range = metric.start_offset..metric.end_offset;
+                let text = self.text[range.clone()].trim_end();
+                let bounds = text_layout
+                    .rects_for_range(range)
+                    .into_iter()
+                    .map(|rect| self.affine.transform_aabb(Aabb::from_kurbo_rect(rect)))
+                    .reduce(|merged, rect| merged.merged(&rect))?;
+                (!text.is_empty()).then(|| TextLine {
+                    text: text.to_string(),
+                    bounds,
+                })
+            })
+            .collect())
     }
 
     pub fn get_text_slice_for_range(&self, range: Range<usize>) -> &str {
@@ -1052,4 +1084,23 @@ fn remove_intersecting_attrs_in_range(
         // Filter out any that became empty or are contained in the given range
         .filter(|attr| !attr.range.is_empty())
         .collect::<Vec<RangedTextAttribute>>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lines_are_laid_out_top_to_bottom_without_empty_ones() {
+        let text = "Hello world\n\n你好".to_string();
+        let stroke = TextStroke::new(text, Vector2::new(100.0, 200.0), TextStyle::default());
+        let lines = stroke.lines().unwrap();
+
+        let texts = lines.iter().map(|l| l.text.as_str()).collect::<Vec<&str>>();
+        assert_eq!(texts, ["Hello world", "你好"]);
+        assert_eq!(lines[0].bounds.mins.x, 100.0);
+        assert_eq!(lines[0].bounds.mins.y, 200.0);
+        assert!(lines[1].bounds.mins.y >= lines[0].bounds.maxs.y);
+        assert!(stroke.bounds().contains(&lines[1].bounds));
+    }
 }
