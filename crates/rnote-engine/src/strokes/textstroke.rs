@@ -539,10 +539,18 @@ impl Drawable for TextStroke {
     }
 }
 
+/// A character of a [TextLine].
+#[derive(Debug, Clone)]
+pub struct TextChar {
+    pub ch: char,
+    /// The bounds of the character on the document.
+    pub bounds: Aabb,
+}
+
 /// A line of a [TextStroke] as it is laid out.
 #[derive(Debug, Clone)]
 pub struct TextLine {
-    pub text: String,
+    pub chars: Vec<TextChar>,
     /// The bounds of the line on the document.
     pub bounds: Aabb,
 }
@@ -561,21 +569,32 @@ impl TextStroke {
         let text_layout = self
             .text_style
             .build_text_layout(&mut piet_cairo::CairoText::new(), self.text.clone())?;
+        let bounds_for_range = |range: Range<usize>| {
+            text_layout
+                .rects_for_range(range)
+                .into_iter()
+                .map(|rect| self.affine.transform_aabb(Aabb::from_kurbo_rect(rect)))
+                .reduce(|merged, rect| merged.merged(&rect))
+        };
 
         Ok((0..text_layout.line_count())
             .filter_map(|line| {
                 let metric = text_layout.line_metric(line)?;
-                let range = metric.start_offset..metric.end_offset;
-                let text = self.text[range.clone()].trim_end();
-                let bounds = text_layout
-                    .rects_for_range(range)
-                    .into_iter()
-                    .map(|rect| self.affine.transform_aabb(Aabb::from_kurbo_rect(rect)))
-                    .reduce(|merged, rect| merged.merged(&rect))?;
-                (!text.is_empty()).then(|| TextLine {
-                    text: text.to_string(),
-                    bounds,
-                })
+                let line_text = &self.text[metric.start_offset..metric.end_offset];
+                let chars = line_text
+                    .trim_end()
+                    .char_indices()
+                    .filter_map(|(i, ch)| {
+                        let start = metric.start_offset + i;
+                        let bounds = bounds_for_range(start..start + ch.len_utf8())?;
+                        Some(TextChar { ch, bounds })
+                    })
+                    .collect::<Vec<TextChar>>();
+                let bounds = chars
+                    .iter()
+                    .map(|c| c.bounds)
+                    .reduce(|merged, bounds| merged.merged(&bounds))?;
+                Some(TextLine { chars, bounds })
             })
             .collect())
     }
@@ -1096,11 +1115,22 @@ mod tests {
         let stroke = TextStroke::new(text, Vector2::new(100.0, 200.0), TextStyle::default());
         let lines = stroke.lines().unwrap();
 
-        let texts = lines.iter().map(|l| l.text.as_str()).collect::<Vec<&str>>();
+        let texts = lines
+            .iter()
+            .map(|l| l.chars.iter().map(|c| c.ch).collect::<String>())
+            .collect::<Vec<String>>();
         assert_eq!(texts, ["Hello world", "你好"]);
         assert_eq!(lines[0].bounds.mins.x, 100.0);
         assert_eq!(lines[0].bounds.mins.y, 200.0);
         assert!(lines[1].bounds.mins.y >= lines[0].bounds.maxs.y);
         assert!(stroke.bounds().contains(&lines[1].bounds));
+        // The characters follow each other from left to right, the narrow `l` takes less room than the `H`
+        let hello = &lines[0].chars;
+        assert!(
+            hello
+                .windows(2)
+                .all(|c| c[0].bounds.maxs.x <= c[1].bounds.mins.x + 1e-6)
+        );
+        assert!(hello[2].bounds.extents().x < hello[0].bounds.extents().x);
     }
 }

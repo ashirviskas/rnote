@@ -294,6 +294,24 @@ mod tests {
         h: 12.0,
     };
 
+    /// A line read with full confidence, with its characters spread evenly over the bounds.
+    fn typed(text: &str, bounds: Bounds) -> Line {
+        let advance = bounds.w / text.chars().count() as f64;
+        let chars = text
+            .chars()
+            .enumerate()
+            .map(|(i, ch)| CharBox {
+                x0: bounds.x + i as f64 * advance,
+                x1: bounds.x + (i + 1) as f64 * advance,
+                candidates: vec![Candidate {
+                    ch,
+                    confidence: 1.0,
+                }],
+            })
+            .collect();
+        Line { bounds, chars }
+    }
+
     fn unit(hash: u64, page: u32) -> Unit {
         Unit {
             hash,
@@ -326,9 +344,9 @@ mod tests {
                 .map(|&(ch, confidence)| Candidate { ch, confidence })
                 .collect::<Vec<Candidate>>()
         };
-        let mut misread = Line::typed("我没有", BOUNDS);
+        let mut misread = typed("我没有", BOUNDS);
         misread.chars[1].candidates = candidates(&[('没', 0.6), ('沒', 0.3)]);
-        let index = index_with(vec![misread, Line::typed("我沒有", BOUNDS)]);
+        let index = index_with(vec![misread, typed("我沒有", BOUNDS)]);
 
         let hits = index.search("沒有").unwrap();
         assert_eq!(hits.len(), 2);
@@ -345,7 +363,7 @@ mod tests {
 
     #[test]
     fn ignores_whitespace_and_case() {
-        let index = index_with(vec![Line::typed("Hello World", BOUNDS)]);
+        let index = index_with(vec![typed("Hello World", BOUNDS)]);
         assert_eq!(index.search("LOW or").unwrap().len(), 1);
         assert!(index.search("  ").unwrap().is_empty());
     }
@@ -355,7 +373,7 @@ mod tests {
         let mut index = index_with(Vec::new());
         let path = Path::new("/notes/b.rnote");
         index
-            .insert_unit(path, unit(1, 0), &[Line::typed("partial", BOUNDS)])
+            .insert_unit(path, unit(1, 0), &[typed("partial", BOUNDS)])
             .unwrap();
         assert!(!index.is_current(path, STAMP).unwrap());
         // What is indexed so far can be found already, and does not need to be recognised again
@@ -368,7 +386,7 @@ mod tests {
 
     #[test]
     fn finishing_keeps_unchanged_units_and_removes_the_rest() {
-        let lines = vec![Line::typed("kept", BOUNDS), Line::typed("gone", BOUNDS)];
+        let lines = vec![typed("kept", BOUNDS), typed("gone", BOUNDS)];
         let mut index = index_with(lines);
         let path = Path::new(PATH);
         let changed = FileStamp { mtime: 8, size: 8 };

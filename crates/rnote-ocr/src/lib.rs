@@ -20,7 +20,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// The directory that holds the model files and the index.
+/// The directory that holds the index.
 pub fn data_dir() -> anyhow::Result<PathBuf> {
     let base = match std::env::var_os("XDG_DATA_HOME") {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
@@ -80,24 +80,6 @@ pub struct Line {
 }
 
 impl Line {
-    /// A line whose text is known, with its characters spread evenly over the bounds.
-    pub fn typed(text: &str, bounds: Bounds) -> Self {
-        let advance = bounds.w / text.chars().count().max(1) as f64;
-        let chars = text
-            .chars()
-            .enumerate()
-            .map(|(i, ch)| CharBox {
-                x0: bounds.x + i as f64 * advance,
-                x1: bounds.x + (i + 1) as f64 * advance,
-                candidates: vec![Candidate {
-                    ch,
-                    confidence: 1.0,
-                }],
-            })
-            .collect();
-        Self { bounds, chars }
-    }
-
     /// The most likely reading of the line.
     pub fn text(&self) -> String {
         self.chars.iter().filter_map(CharBox::top).collect()

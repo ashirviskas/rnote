@@ -1,4 +1,6 @@
 //! Reads text from an image with the PP-OCRv5 mobile models: one finds the text lines, the other reads each line.
+//!
+//! The models are compiled into the binary, see the `models` directory of this crate.
 
 // Imports
 use crate::{Bounds, Candidate, CharBox, Line};
@@ -7,7 +9,10 @@ use image::RgbImage;
 use image::imageops::{self, FilterType};
 use ort::session::Session;
 use ort::value::Tensor;
-use std::path::Path;
+
+const DET_MODEL: &[u8] = include_bytes!("../models/pp-ocrv5_mobile_det.onnx");
+const REC_MODEL: &[u8] = include_bytes!("../models/pp-ocrv5_mobile_rec.onnx");
+const DICT: &str = include_str!("../models/ppocrv5_dict.txt");
 
 /// Finds and reads the text lines of an image.
 #[derive(Debug)]
@@ -19,10 +24,6 @@ pub struct Recognizer {
 }
 
 impl Recognizer {
-    pub const DET_MODEL: &'static str = "pp-ocrv5_mobile_det.onnx";
-    pub const REC_MODEL: &'static str = "pp-ocrv5_mobile_rec.onnx";
-    pub const DICT: &'static str = "ppocrv5_dict.txt";
-
     /// Larger images are scaled down for detection. The peak memory grows with the pixels detection runs on:
     /// about 110 MB at this size, 280 MB at 1600.
     const DET_MAX_SIDE: u32 = 960;
@@ -39,29 +40,17 @@ impl Recognizer {
     /// Readings other than the most likely one are dropped below this confidence.
     const MIN_CANDIDATE_CONFIDENCE: f32 = 0.01;
 
-    /// Loads the models from the given directory.
-    pub fn new(model_dir: &Path) -> anyhow::Result<Self> {
-        for name in [Self::DET_MODEL, Self::REC_MODEL, Self::DICT] {
-            if !model_dir.join(name).is_file() {
-                anyhow::bail!(
-                    "Recognition model file \"{}\" is missing. Run `just ocr-models` to download the models.",
-                    model_dir.join(name).display()
-                );
-            }
-        }
-        let dict = std::fs::read_to_string(model_dir.join(Self::DICT))
-            .context("Reading the dictionary failed.")?;
+    /// Loads the models.
+    pub fn new() -> anyhow::Result<Self> {
         // Blank, then one class per dictionary line, then the space.
         let classes = std::iter::once('\0')
-            .chain(dict.lines().filter_map(|l| l.chars().next()))
+            .chain(DICT.lines().filter_map(|l| l.chars().next()))
             .chain(std::iter::once(' '))
             .collect();
 
         Ok(Self {
-            det: load_session(&model_dir.join(Self::DET_MODEL))
-                .context("Loading the detection model failed.")?,
-            rec: load_session(&model_dir.join(Self::REC_MODEL))
-                .context("Loading the recognition model failed.")?,
+            det: load_session(DET_MODEL).context("Loading the detection model failed.")?,
+            rec: load_session(REC_MODEL).context("Loading the recognition model failed.")?,
             classes,
         })
     }
@@ -209,13 +198,13 @@ fn candidates(frame: &[f32], classes: &[char]) -> Vec<Candidate> {
 
 /// Loads a model. The memory arena and the memory pattern are off, so that memory is not held on to between images
 /// of different sizes.
-fn load_session(model: &Path) -> ort::Result<Session> {
+fn load_session(model: &[u8]) -> ort::Result<Session> {
     Session::builder()?
         .with_execution_providers([ort::ep::CPU::default().with_arena_allocator(false).build()])?
         .with_memory_pattern(false)?
         .with_intra_threads(2)?
         .with_inter_threads(1)?
-        .commit_from_file(model)
+        .commit_from_memory(model)
 }
 
 /// Converts an image into the model input: one plane per channel in blue, green, red order.

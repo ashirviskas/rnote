@@ -8,7 +8,7 @@ use rnote_engine::Engine;
 use rnote_engine::engine::EngineSnapshot;
 use rnote_engine::engine::export::{TextLayer, TextUnit};
 use rnote_engine::strokes::Stroke;
-use rnote_ocr::{Bounds, FileStamp, Index, Line, Recognizer, Source, Unit};
+use rnote_ocr::{Bounds, Candidate, CharBox, FileStamp, Index, Line, Recognizer, Source, Unit};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -158,13 +158,26 @@ fn read_unit(
             if let Stroke::TextStroke(textstroke) = stroke.as_ref() {
                 lines.extend(textstroke.lines()?.into_iter().map(|line| {
                     let extents = line.bounds.extents();
-                    let bounds = Bounds {
-                        x: line.bounds.mins.x,
-                        y: line.bounds.mins.y,
-                        w: extents.x,
-                        h: extents.y,
-                    };
-                    Line::typed(&line.text, bounds)
+                    Line {
+                        bounds: Bounds {
+                            x: line.bounds.mins.x,
+                            y: line.bounds.mins.y,
+                            w: extents.x,
+                            h: extents.y,
+                        },
+                        chars: line
+                            .chars
+                            .into_iter()
+                            .map(|c| CharBox {
+                                x0: c.bounds.mins.x,
+                                x1: c.bounds.maxs.x,
+                                candidates: vec![Candidate {
+                                    ch: c.ch,
+                                    confidence: 1.0,
+                                }],
+                            })
+                            .collect(),
+                    }
                 }));
             }
         }
@@ -184,7 +197,7 @@ fn read_unit(
     let origin = image.rectangle.bounds().mins;
     let recognizer = match recognizer {
         Some(recognizer) => recognizer,
-        None => recognizer.insert(Recognizer::new(&rnote_ocr::data_dir()?)?),
+        None => recognizer.insert(Recognizer::new()?),
     };
     Ok(recognizer
         .recognize(&flatten(image)?)?
