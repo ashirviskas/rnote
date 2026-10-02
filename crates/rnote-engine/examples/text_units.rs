@@ -6,7 +6,6 @@ use rnote_compose::SplitOrder;
 use rnote_engine::Engine;
 use rnote_engine::engine::EngineSnapshot;
 use rnote_engine::engine::export::TextLayer;
-use rnote_engine::strokes::Stroke;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -28,11 +27,15 @@ fn main() -> anyhow::Result<()> {
         .enumerate()
     {
         let name = format!("{i:03}_page{:03}_{:?}", unit.page, unit.layer);
-        if unit.layer == TextLayer::Typed {
-            for stroke in unit.content.strokes.iter() {
-                if let Stroke::TextStroke(text) = stroke.as_ref() {
-                    println!("{name}: {:?}", text.lines()?);
-                }
+        let mut carried = Vec::new();
+        for stroke in unit.content.strokes.iter() {
+            carried.extend(stroke.text_lines()?);
+        }
+        if !carried.is_empty() || unit.layer == TextLayer::Typed {
+            println!("{name}: carries {} lines of text", carried.len());
+            for line in carried {
+                let text = line.chars.iter().map(|c| c.ch).collect::<String>();
+                println!("    {:?}: {text}", line.bounds);
             }
             continue;
         }

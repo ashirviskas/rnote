@@ -2,6 +2,7 @@
 use super::bitmapimage::BitmapImage;
 use super::brushstroke::BrushStroke;
 use super::content::GeneratedContentImages;
+use super::imagetext::ImageTextLine;
 use super::shapestroke::ShapeStroke;
 use super::vectorimage::VectorImage;
 use super::{Content, TextStroke};
@@ -10,7 +11,7 @@ use crate::Image;
 use crate::Svg;
 use crate::fileformats::xoppformat::{self, XoppColor};
 use crate::store::chrono_comp::StrokeLayer;
-use crate::strokes::textstroke::TextStyle;
+use crate::strokes::textstroke::{TextLine, TextStyle};
 use crate::{Drawable, utils};
 use p2d::bounding_volume::Aabb;
 use p2d::glamx::DAffine2;
@@ -208,6 +209,25 @@ impl Transformable for Stroke {
 impl Stroke {
     /// The default offset in surface coords when importing a stroke.
     pub const IMPORT_OFFSET_DEFAULT: Vector2 = Vector2::splat(32.);
+
+    /// The lines of text the stroke carries, positioned on the document: typed text, or the text layer of an image
+    /// that was imported from a Pdf.
+    ///
+    /// Empty for all other strokes. Text that is only drawn, like handwriting or a scan, is not carried.
+    pub fn text_lines(&self) -> anyhow::Result<Vec<TextLine>> {
+        let of_image = |text_lines: &[ImageTextLine], rectangle: &Rectangle| {
+            text_lines
+                .iter()
+                .map(|line| line.to_document(rectangle))
+                .collect()
+        };
+        match self {
+            Stroke::TextStroke(textstroke) => textstroke.lines(),
+            Stroke::VectorImage(image) => Ok(of_image(&image.text_lines, &image.rectangle)),
+            Stroke::BitmapImage(image) => Ok(of_image(&image.text_lines, &image.rectangle)),
+            Stroke::BrushStroke(_) | Stroke::ShapeStroke(_) => Ok(Vec::new()),
+        }
+    }
 
     pub fn extract_default_layer(&self) -> StrokeLayer {
         match self {
@@ -428,7 +448,11 @@ impl Stroke {
         };
         let image = Image::try_from_encoded_bytes(&bytes)?;
 
-        Ok(Stroke::BitmapImage(BitmapImage { image, rectangle }))
+        Ok(Stroke::BitmapImage(BitmapImage {
+            image,
+            rectangle,
+            text_lines: Vec::new(),
+        }))
     }
 
     pub fn from_xopptext(

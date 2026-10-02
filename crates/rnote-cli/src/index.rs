@@ -7,7 +7,6 @@ use rnote_compose::shapes::Shapeable;
 use rnote_engine::Engine;
 use rnote_engine::engine::EngineSnapshot;
 use rnote_engine::engine::export::{TextLayer, TextUnit};
-use rnote_engine::strokes::Stroke;
 use rnote_ocr::{Bounds, Candidate, CharBox, FileStamp, Index, Line, Recognizer, Source, Unit};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -154,35 +153,34 @@ fn read_unit(
     text_unit: &TextUnit,
     zhuyin: bool,
 ) -> anyhow::Result<Vec<Line>> {
-    if text_unit.layer == TextLayer::Typed {
-        let mut lines = Vec::new();
-        for stroke in text_unit.content.strokes.iter() {
-            if let Stroke::TextStroke(textstroke) = stroke.as_ref() {
-                lines.extend(textstroke.lines()?.into_iter().map(|line| {
-                    let extents = line.bounds.extents();
-                    Line {
-                        bounds: Bounds {
-                            x: line.bounds.mins.x,
-                            y: line.bounds.mins.y,
-                            w: extents.x,
-                            h: extents.y,
-                        },
-                        chars: line
-                            .chars
-                            .into_iter()
-                            .map(|c| CharBox {
-                                x0: c.bounds.mins.x,
-                                x1: c.bounds.maxs.x,
-                                candidates: vec![Candidate {
-                                    ch: c.ch,
-                                    confidence: 1.0,
-                                }],
-                            })
-                            .collect(),
-                    }
-                }));
+    // Text that a stroke carries needs no recognition: typed text, and the text layer of an imported Pdf page
+    let mut lines = Vec::new();
+    for stroke in text_unit.content.strokes.iter() {
+        lines.extend(stroke.text_lines()?.into_iter().map(|line| {
+            let extents = line.bounds.extents();
+            Line {
+                bounds: Bounds {
+                    x: line.bounds.mins.x,
+                    y: line.bounds.mins.y,
+                    w: extents.x,
+                    h: extents.y,
+                },
+                chars: line
+                    .chars
+                    .into_iter()
+                    .map(|c| CharBox {
+                        x0: c.bounds.mins.x,
+                        x1: c.bounds.maxs.x,
+                        candidates: vec![Candidate {
+                            ch: c.ch,
+                            confidence: 1.0,
+                        }],
+                    })
+                    .collect(),
             }
-        }
+        }));
+    }
+    if !lines.is_empty() || text_unit.layer == TextLayer::Typed {
         return Ok(lines);
     }
 

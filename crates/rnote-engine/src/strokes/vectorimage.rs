@@ -1,5 +1,6 @@
 // Imports
 use super::content::GeneratedContentImages;
+use super::imagetext::{self, ImageTextLine};
 use super::resize::{ImageSizeOption, calculate_resize_ratio};
 use super::{Content, Stroke};
 use crate::Image;
@@ -34,6 +35,9 @@ pub struct VectorImage {
     pub intrinsic_size: Vector2,
     #[serde(rename = "rectangle")]
     pub rectangle: Rectangle,
+    /// The text the image carries, when it was imported from a Pdf page with a text layer.
+    #[serde(rename = "text_lines", skip_serializing_if = "Vec::is_empty")]
+    pub text_lines: Vec<ImageTextLine>,
 }
 
 impl Default for VectorImage {
@@ -42,6 +46,7 @@ impl Default for VectorImage {
             svg_data: String::default(),
             intrinsic_size: Vector2::ZERO,
             rectangle: Rectangle::default(),
+            text_lines: Vec::new(),
         }
     }
 }
@@ -202,6 +207,7 @@ impl VectorImage {
             svg_data,
             intrinsic_size,
             rectangle,
+            text_lines: Vec::new(),
         })
     }
 
@@ -267,18 +273,22 @@ impl VectorImage {
                 }
                 let svg_data = hayro_svg::convert(page, &interpreter_settings, &render_settings);
                 let svg = Svg { svg_data, bounds };
+                let text_lines = imagetext::pdf_page_text(page, &interpreter_settings);
 
-                Some(svg)
+                Some((svg, text_lines))
             })
-            .collect::<Vec<Svg>>();
+            .collect::<Vec<(Svg, Vec<ImageTextLine>)>>();
 
         svgs.into_par_iter()
-            .map(|svg| {
-                Self::from_svg_str(
-                    svg.svg_data.as_str(),
-                    svg.bounds.mins,
-                    ImageSizeOption::ImposeSize(svg.bounds.extents()),
-                )
+            .map(|(svg, text_lines)| {
+                Ok(Self {
+                    text_lines,
+                    ..Self::from_svg_str(
+                        svg.svg_data.as_str(),
+                        svg.bounds.mins,
+                        ImageSizeOption::ImposeSize(svg.bounds.extents()),
+                    )?
+                })
             })
             .collect()
     }
