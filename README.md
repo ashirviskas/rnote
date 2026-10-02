@@ -125,6 +125,8 @@ search entry in the workspace browser (search button in the header, or `Ctrl+F`)
 
 - Files are indexed in the background when they are opened or saved. Index a whole folder with `rnote-cli index <folder>`.
 - Search from the terminal with `rnote-cli search <text>`.
+- A Pdf that has a text layer keeps its text when it is imported, so its pages are found exactly and without
+  recognition. `rnote-cli import note.rnote -i file.pdf` imports one from the terminal.
 - Zhuyin (bopomofo) can be read too with the experimental setting "Read Zhuyin", or `rnote-cli index --zhuyin`.
 - The recognition models are part of the build, nothing needs to be downloaded. How it works:
   [crates/rnote-ocr](./crates/rnote-ocr/README.md).
