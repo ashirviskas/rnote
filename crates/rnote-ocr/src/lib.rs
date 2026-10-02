@@ -7,11 +7,13 @@
 
 // Modules
 pub mod index;
+pub mod query;
 #[cfg(feature = "recognize")]
 pub mod recognize;
 
 // Re-exports
 pub use index::{FileStamp, Index};
+pub use query::{Match, Query};
 #[cfg(feature = "recognize")]
 pub use recognize::Recognizer;
 
@@ -66,6 +68,18 @@ pub struct CharBox {
 }
 
 impl CharBox {
+    /// A character that is known, not recognised.
+    pub fn exact(ch: char, x0: f64, x1: f64) -> Self {
+        Self {
+            x0,
+            x1,
+            candidates: vec![Candidate {
+                ch,
+                confidence: 1.0,
+            }],
+        }
+    }
+
     /// The most likely reading.
     pub fn top(&self) -> Option<char> {
         self.candidates.first().map(|c| c.ch)

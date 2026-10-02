@@ -8,22 +8,29 @@ use crate::RnApp;
 use futures::StreamExt;
 use futures::channel::mpsc;
 use gtk4::{gio, glib, prelude::*};
+use std::cell::Cell;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
 thread_local! {
     static QUEUE: mpsc::UnboundedSender<PathBuf> = start();
+    /// How many files are queued or being indexed.
+    static PENDING: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Whether files are still being indexed. Until they are done, search does not find all of their text.
+pub(crate) fn is_busy() -> bool {
+    PENDING.get() > 0
 }
 
 /// Queues a rnote file to be indexed. The files are indexed one at a time, in the order they were queued.
 ///
 /// Queuing a file that did not change since it was indexed costs next to nothing.
 pub(crate) fn queue(rnote_file: PathBuf) {
-    QUEUE.with(|queue| {
-        if let Err(e) = queue.unbounded_send(rnote_file) {
-            warn!("Queuing file for indexing failed, Err: {e:?}");
-        }
+    QUEUE.with(|queue| match queue.unbounded_send(rnote_file) {
+        Ok(()) => PENDING.set(PENDING.get() + 1),
+        Err(e) => warn!("Queuing file for indexing failed, Err: {e:?}"),
     });
 }
 
@@ -34,6 +41,7 @@ fn start() -> mpsc::UnboundedSender<PathBuf> {
             if let Err(e) = index(&rnote_file).await {
                 warn!("Indexing file {rnote_file:?} failed, Err: {e:?}");
             }
+            PENDING.set(PENDING.get() - 1);
         }
     });
     sender
