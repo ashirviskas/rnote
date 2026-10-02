@@ -1,0 +1,387 @@
+//! The search index: the text lines of all indexed files in one SQLite database.
+//!
+//! A file is indexed unit by unit. Units stay in the index for as long as the file still has a unit with the same
+//! hash, so only the changed parts of a file need to be recognised again.
+
+// Imports
+use crate::{Bounds, CharBox, Hit, Line, Unit};
+use anyhow::Context;
+use rusqlite::{Connection, params};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
+
+/// The state of a file on disk. A file is looked at again when it changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileStamp {
+    /// The modification time in nanoseconds since the unix epoch.
+    pub mtime: i64,
+    pub size: i64,
+}
+
+impl FileStamp {
+    pub fn of(path: &Path) -> anyhow::Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        Ok(Self {
+            mtime: metadata.modified()?.duration_since(UNIX_EPOCH)?.as_nanos() as i64,
+            size: metadata.len() as i64,
+        })
+    }
+}
+
+/// The search index.
+#[derive(Debug)]
+pub struct Index {
+    conn: Connection,
+}
+
+impl Index {
+    const FILE_NAME: &'static str = "index.sqlite";
+    // The stamp of a file is zero until all of its units are indexed.
+    const SCHEMA: &'static str = "
+        PRAGMA foreign_keys = ON;
+        CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY,
+            path TEXT UNIQUE NOT NULL,
+            mtime INTEGER NOT NULL DEFAULT 0,
+            size INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS units (
+            id INTEGER PRIMARY KEY,
+            file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+            hash INTEGER NOT NULL,
+            page INTEGER NOT NULL,
+            source INTEGER NOT NULL,
+            UNIQUE (file_id, hash)
+        );
+        CREATE TABLE IF NOT EXISTS lines (
+            id INTEGER PRIMARY KEY,
+            unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+            x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL,
+            text TEXT NOT NULL,
+            chars TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS lines_unit_id ON lines(unit_id);
+    ";
+
+    /// Opens the index in the data directory, creating it when it does not exist.
+    pub fn open() -> anyhow::Result<Self> {
+        Self::open_at(&crate::data_dir()?.join(Self::FILE_NAME))
+    }
+
+    /// Opens the index at the given path, creating it when it does not exist.
+    pub fn open_at(path: &Path) -> anyhow::Result<Self> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let conn = Connection::open(path)
+            .with_context(|| format!("Opening the index \"{}\" failed.", path.display()))?;
+        conn.execute_batch(Self::SCHEMA)?;
+        Ok(Self { conn })
+    }
+
+    /// Whether the file is fully indexed in the given state.
+    pub fn is_current(&self, path: &Path, stamp: FileStamp) -> anyhow::Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM files WHERE path = ?1 AND mtime = ?2 AND size = ?3)",
+            params![path_str(path)?, stamp.mtime, stamp.size],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// The hashes of the units that are indexed for the file.
+    pub fn unit_hashes(&self, path: &Path) -> anyhow::Result<HashSet<u64>> {
+        let hashes = self
+            .conn
+            .prepare(
+                "SELECT units.hash FROM units JOIN files ON files.id = units.file_id
+                 WHERE files.path = ?1",
+            )?
+            .query_map(params![path_str(path)?], |row| row.get::<_, i64>(0))?
+            .map(|hash| hash.map(|h| h as u64))
+            .collect::<Result<HashSet<u64>, _>>()?;
+        Ok(hashes)
+    }
+
+    /// Adds a unit of the file with its lines.
+    pub fn insert_unit(&mut self, path: &Path, unit: Unit, lines: &[Line]) -> anyhow::Result<()> {
+        let tx = self.conn.transaction()?;
+        let file_id = file_id(&tx, path)?;
+        tx.execute(
+            "DELETE FROM units WHERE file_id = ?1 AND hash = ?2",
+            params![file_id, unit.hash as i64],
+        )?;
+        tx.execute(
+            "INSERT INTO units (file_id, hash, page, source) VALUES (?1, ?2, ?3, ?4)",
+            params![file_id, unit.hash as i64, unit.page, unit.source as u8],
+        )?;
+        let unit_id = tx.last_insert_rowid();
+        {
+            let mut insert = tx.prepare(
+                "INSERT INTO lines (unit_id, x, y, w, h, text, chars)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            for line in lines {
+                insert.execute(params![
+                    unit_id,
+                    line.bounds.x,
+                    line.bounds.y,
+                    line.bounds.w,
+                    line.bounds.h,
+                    line.text(),
+                    serde_json::to_string(&line.chars)?,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Marks the file as fully indexed in the given state.
+    ///
+    /// `units` are all units the file has now. Indexed units that are not among them are removed.
+    pub fn finish_file(
+        &mut self,
+        path: &Path,
+        stamp: FileStamp,
+        units: &[Unit],
+    ) -> anyhow::Result<()> {
+        let pages = units
+            .iter()
+            .map(|unit| (unit.hash as i64, unit.page))
+            .collect::<HashMap<i64, u32>>();
+        let tx = self.conn.transaction()?;
+        let file_id = file_id(&tx, path)?;
+        let indexed = tx
+            .prepare("SELECT id, hash FROM units WHERE file_id = ?1")?
+            .query_map(params![file_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<(i64, i64)>, _>>()?;
+        for (unit_id, hash) in indexed {
+            match pages.get(&hash) {
+                // The page of an unchanged unit changes when pages before it gain or lose content
+                Some(page) => tx.execute(
+                    "UPDATE units SET page = ?1 WHERE id = ?2",
+                    params![page, unit_id],
+                )?,
+                None => tx.execute("DELETE FROM units WHERE id = ?1", params![unit_id])?,
+            };
+        }
+        tx.execute(
+            "UPDATE files SET mtime = ?1, size = ?2 WHERE id = ?3",
+            params![stamp.mtime, stamp.size, file_id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Removes the files that no longer exist on disk. Returns how many were removed.
+    pub fn remove_missing(&mut self) -> anyhow::Result<usize> {
+        let missing = self
+            .conn
+            .prepare("SELECT path FROM files")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .filter(|path| path.as_ref().is_ok_and(|p| !Path::new(p).exists()))
+            .collect::<Result<Vec<String>, _>>()?;
+        for path in missing.iter() {
+            self.conn
+                .execute("DELETE FROM files WHERE path = ?1", params![path])?;
+        }
+        Ok(missing.len())
+    }
+
+    /// Finds the query in all indexed lines, the best hits first.
+    ///
+    /// A line matches where the characters of the query appear in a row, each among the candidates of its position.
+    /// Whitespace is ignored and letter case does not matter.
+    pub fn search(&self, query: &str) -> anyhow::Result<Vec<Hit>> {
+        let query = query
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .map(fold_case)
+            .collect::<Vec<char>>();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut hits = Vec::new();
+        let mut select = self.conn.prepare(
+            "SELECT files.path, units.page, lines.y, lines.h, lines.text, lines.chars
+             FROM lines JOIN units ON units.id = lines.unit_id JOIN files ON files.id = units.file_id",
+        )?;
+        let mut rows = select.query([])?;
+        while let Some(row) = rows.next()? {
+            let chars: Vec<CharBox> = serde_json::from_str(row.get_ref(5)?.as_str()?)?;
+            let chars = chars
+                .iter()
+                .filter(|c| c.top().is_some_and(|ch| !ch.is_whitespace()))
+                .collect::<Vec<&CharBox>>();
+
+            for window in chars.windows(query.len()) {
+                let Some(score) = match_score(window, &query) else {
+                    continue;
+                };
+                let (x0, x1) = (window[0].x0, window[window.len() - 1].x1);
+                hits.push(Hit {
+                    path: PathBuf::from(row.get::<_, String>(0)?),
+                    page: row.get(1)?,
+                    bounds: Bounds {
+                        x: x0,
+                        y: row.get(2)?,
+                        w: x1 - x0,
+                        h: row.get(3)?,
+                    },
+                    text: row.get(4)?,
+                    score,
+                });
+            }
+        }
+        hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+        Ok(hits)
+    }
+}
+
+/// The id of the file's row, which is created when the file is not known yet.
+fn file_id(conn: &Connection, path: &Path) -> anyhow::Result<i64> {
+    let path = path_str(path)?;
+    conn.execute(
+        "INSERT INTO files (path) VALUES (?1) ON CONFLICT (path) DO NOTHING",
+        params![path],
+    )?;
+    Ok(conn.query_row(
+        "SELECT id FROM files WHERE path = ?1",
+        params![path],
+        |row| row.get(0),
+    )?)
+}
+
+/// Scores the characters against the query, or returns `None` when they do not match.
+///
+/// The score is the mean confidence of the matched readings, plus one when all of them are the most likely reading.
+fn match_score(chars: &[&CharBox], query: &[char]) -> Option<f32> {
+    let mut exact = true;
+    let mut confidence = 0.0;
+    for (c, &wanted) in chars.iter().zip(query) {
+        let position = c
+            .candidates
+            .iter()
+            .position(|candidate| fold_case(candidate.ch) == wanted)?;
+        exact &= position == 0;
+        confidence += c.candidates[position].confidence;
+    }
+    Some(confidence / query.len() as f32 + if exact { 1.0 } else { 0.0 })
+}
+
+fn fold_case(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
+}
+
+fn path_str(path: &Path) -> anyhow::Result<&str> {
+    path.to_str()
+        .with_context(|| format!("The path \"{}\" is not valid UTF-8.", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Candidate, Source};
+
+    const PATH: &str = "/notes/a.rnote";
+    const STAMP: FileStamp = FileStamp { mtime: 7, size: 7 };
+    const BOUNDS: Bounds = Bounds {
+        x: 0.0,
+        y: 5.0,
+        w: 30.0,
+        h: 12.0,
+    };
+
+    fn unit(hash: u64, page: u32) -> Unit {
+        Unit {
+            hash,
+            page,
+            source: Source::Ink,
+        }
+    }
+
+    /// An index holding one file with one unit per line.
+    fn index_with(lines: Vec<Line>) -> Index {
+        let mut index = Index {
+            conn: Connection::open_in_memory().unwrap(),
+        };
+        index.conn.execute_batch(Index::SCHEMA).unwrap();
+        let units = (0..lines.len() as u64)
+            .map(|i| unit(i, 3))
+            .collect::<Vec<Unit>>();
+        for (unit, line) in units.iter().zip(lines) {
+            index.insert_unit(Path::new(PATH), *unit, &[line]).unwrap();
+        }
+        index.finish_file(Path::new(PATH), STAMP, &units).unwrap();
+        index
+    }
+
+    #[test]
+    fn matches_on_lower_candidates_and_ranks_them_below_exact() {
+        let candidates = |readings: &[(char, f32)]| {
+            readings
+                .iter()
+                .map(|&(ch, confidence)| Candidate { ch, confidence })
+                .collect::<Vec<Candidate>>()
+        };
+        let mut misread = Line::typed("我没有", BOUNDS);
+        misread.chars[1].candidates = candidates(&[('没', 0.6), ('沒', 0.3)]);
+        let index = index_with(vec![misread, Line::typed("我沒有", BOUNDS)]);
+
+        let hits = index.search("沒有").unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].text, "我沒有");
+        assert_eq!(hits[1].text, "我没有");
+        assert!(hits[0].score > 1.0 && hits[1].score < 1.0);
+        // A hit covers the matched characters only
+        assert_eq!((hits[1].bounds.x, hits[1].bounds.w), (10.0, 20.0));
+        assert_eq!((hits[1].bounds.y, hits[1].bounds.h), (5.0, 12.0));
+        assert_eq!(hits[1].page, 3);
+
+        assert!(index.search("有我").unwrap().is_empty());
+    }
+
+    #[test]
+    fn ignores_whitespace_and_case() {
+        let index = index_with(vec![Line::typed("Hello World", BOUNDS)]);
+        assert_eq!(index.search("LOW or").unwrap().len(), 1);
+        assert!(index.search("  ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_file_is_current_only_once_finished() {
+        let mut index = index_with(Vec::new());
+        let path = Path::new("/notes/b.rnote");
+        index
+            .insert_unit(path, unit(1, 0), &[Line::typed("partial", BOUNDS)])
+            .unwrap();
+        assert!(!index.is_current(path, STAMP).unwrap());
+        // What is indexed so far can be found already, and does not need to be recognised again
+        assert_eq!(index.search("partial").unwrap().len(), 1);
+        assert!(index.unit_hashes(path).unwrap().contains(&1));
+
+        index.finish_file(path, STAMP, &[unit(1, 0)]).unwrap();
+        assert!(index.is_current(path, STAMP).unwrap());
+    }
+
+    #[test]
+    fn finishing_keeps_unchanged_units_and_removes_the_rest() {
+        let lines = vec![Line::typed("kept", BOUNDS), Line::typed("gone", BOUNDS)];
+        let mut index = index_with(lines);
+        let path = Path::new(PATH);
+        let changed = FileStamp { mtime: 8, size: 8 };
+
+        // Unit 0 is unchanged but now on another page, unit 1 no longer exists
+        index.finish_file(path, changed, &[unit(0, 4)]).unwrap();
+        assert!(index.is_current(path, changed).unwrap());
+        assert_eq!(index.unit_hashes(path).unwrap(), HashSet::from([0]));
+        assert_eq!(index.search("kept").unwrap()[0].page, 4);
+        assert!(index.search("gone").unwrap().is_empty());
+
+        // The file does not exist on disk
+        assert_eq!(index.remove_missing().unwrap(), 1);
+        assert!(index.search("kept").unwrap().is_empty());
+    }
+}
