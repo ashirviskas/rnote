@@ -1,4 +1,5 @@
 // Imports
+use super::imagetext::{self, ImageTextLine};
 use super::resize::{ImageSizeOption, calculate_resize_ratio};
 use super::{Content, Stroke};
 use crate::Drawable;
@@ -31,6 +32,9 @@ pub struct BitmapImage {
     pub image: Image,
     #[serde(rename = "rectangle")]
     pub rectangle: Rectangle,
+    /// The text the image carries, when it was imported from a Pdf page with a text layer.
+    #[serde(rename = "text_lines", skip_serializing_if = "Vec::is_empty")]
+    pub text_lines: Vec<ImageTextLine>,
 }
 
 impl Default for BitmapImage {
@@ -38,6 +42,7 @@ impl Default for BitmapImage {
         Self {
             image: Image::default(),
             rectangle: Rectangle::default(),
+            text_lines: Vec::new(),
         }
     }
 }
@@ -123,7 +128,11 @@ impl BitmapImage {
             affine: transform,
         };
 
-        Ok(Self { image, rectangle })
+        Ok(Self {
+            image,
+            rectangle,
+            text_lines: Vec::new(),
+        })
     }
 
     pub fn from_pdf_bytes(
@@ -161,8 +170,15 @@ impl BitmapImage {
         let x = insert_pos[0];
         let mut y = insert_pos[1];
 
+        struct RenderedPage {
+            png_data: Vec<u8>,
+            pos: Vector2,
+            size: Vector2,
+            text_lines: Vec<ImageTextLine>,
+        }
+
         // TODO: investigate if this can be parallelized with rayon's `par_iter()`
-        let pngs = page_range
+        let rendered_pages = page_range
             .map(|page_i| {
                 let page = pages
                     .get(page_i)
@@ -184,10 +200,12 @@ impl BitmapImage {
                 // TODO: implement drawing page borders.
                 // Possibly with vello-cpu, since it already is a dependency of hayro
                 let pixmap = hayro::render(page, &interpreter_settings, &render_settings);
-                let png_data = pixmap.into_png()?;
-
-                let image_pos = Vector2::new(x, y);
-                let image_size = Vector2::new(width, height);
+                let rendered = RenderedPage {
+                    png_data: pixmap.into_png()?,
+                    pos: Vector2::new(x, y),
+                    size: Vector2::new(width, height),
+                    text_lines: imagetext::pdf_page_text(page, &interpreter_settings),
+                };
 
                 if pdf_import_prefs.adjust_document {
                     y += height
@@ -200,13 +218,21 @@ impl BitmapImage {
                     };
                 }
 
-                Ok((png_data, image_pos, image_size))
+                Ok(rendered)
             })
-            .collect::<anyhow::Result<Vec<(Vec<u8>, Vector2, Vector2)>>>()?;
+            .collect::<anyhow::Result<Vec<RenderedPage>>>()?;
 
-        pngs.into_par_iter()
-            .map(|(png_data, pos, size)| {
-                Self::from_image_bytes(&png_data, pos, ImageSizeOption::ImposeSize(size))
+        rendered_pages
+            .into_par_iter()
+            .map(|page| {
+                Ok(Self {
+                    text_lines: page.text_lines,
+                    ..Self::from_image_bytes(
+                        &page.png_data,
+                        page.pos,
+                        ImageSizeOption::ImposeSize(page.size),
+                    )?
+                })
             })
             .collect()
     }

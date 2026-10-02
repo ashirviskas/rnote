@@ -1,5 +1,6 @@
 // Imports
 use crate::{cli, validators};
+use p2d::math::Vector2;
 use rnote_engine::Engine;
 use rnote_engine::engine::{EngineConfigShared, EngineSnapshot};
 use std::path::Path;
@@ -62,9 +63,20 @@ pub(crate) async fn import_file(
         return Err(anyhow::anyhow!("Failed to get filename from rnote_file"));
     };
     let input_bytes = cli::read_bytes_from_file(&input_file).await?;
-    let xopp_import_prefs = config.read().import_prefs.xopp_import_prefs;
-    let snapshot = EngineSnapshot::load_from_xopp_bytes(input_bytes, xopp_import_prefs).await?;
-    let _ = engine.load_snapshot(snapshot);
+    let is_pdf = input_file
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"));
+    if is_pdf {
+        let adjust_document = config.read().import_prefs.pdf_import_prefs.adjust_document;
+        let pages = engine
+            .generate_pdf_pages_from_bytes(input_bytes, Vector2::ZERO, None, None)
+            .await??;
+        let _ = engine.import_generated_content(pages, adjust_document);
+    } else {
+        let xopp_import_prefs = config.read().import_prefs.xopp_import_prefs;
+        let snapshot = EngineSnapshot::load_from_xopp_bytes(input_bytes, xopp_import_prefs).await?;
+        let _ = engine.load_snapshot(snapshot);
+    }
     let rnote_bytes = engine.save_as_rnote_bytes(rnote_file_name).await??;
     cli::create_overwrite_file_w_bytes(&rnote_file, &rnote_bytes).await?;
 

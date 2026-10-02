@@ -17,7 +17,7 @@ graph TD
     D3 --> E
     E -->|Yes| K[Keep its lines]
     E -->|No, ink or image| F[Render, then rnote-ocr: Recognizer]
-    E -->|No, typed| G[Take text and positions from the text layout]
+    E -->|No, typed or Pdf page with text| G[Take the text and positions the stroke carries]
     F --> H[(rnote-ocr: Index, SQLite)]
     G --> H
     K --> H
@@ -45,7 +45,8 @@ read on their own:
 
 - **Ink**: the brush and shape strokes of one page.
 - **Image**: one bitmap or vector image, for example an imported Pdf page. Images are separate from ink, so handwriting
-  on top of a Pdf page and the print below it do not disturb each other.
+  on top of a Pdf page and the print below it do not disturb each other. A Pdf page that was imported with its text
+  layer carries that text (`Stroke::text_lines`); it is indexed as it is and not recognised.
 - **Typed**: one text typed with the typewriter. Its characters and their positions come from the text layout, no
   recognition is involved.
 
@@ -131,6 +132,7 @@ exits. A file that did not change is skipped without being loaded (20 MB, 0.04 s
   zhuyin option is on (see below). Vertical zhuyin is not read either way.
 - Search does not cross line breaks.
 - A moved or renamed file is read again in full.
+- Pdf pages imported before text was kept, and scanned Pdfs, have no text layer and are recognised like any image.
 
 ## Trying it
 

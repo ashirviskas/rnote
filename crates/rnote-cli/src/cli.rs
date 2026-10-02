@@ -38,7 +38,7 @@ pub(crate) enum Command {
         rnote_files: Vec<PathBuf>,
     },
     /// Imports the specified input file and saves it as a rnote save file.{n}
-    /// Currently only `.xopp` files can be imported.
+    /// `.xopp` and `.pdf` files can be imported. The text of a Pdf is kept with its pages and can be searched.
     Import {
         /// The rnote save file.
         rnote_file: PathBuf,
