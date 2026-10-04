@@ -10,6 +10,7 @@ pub mod index;
 pub mod query;
 #[cfg(feature = "recognize")]
 pub mod recognize;
+pub mod select;
 
 // Re-exports
 pub use index::{FileStamp, Index};

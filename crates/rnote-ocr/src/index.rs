@@ -215,27 +215,19 @@ impl Index {
         };
 
         let mut hits = Vec::new();
-        let mut select = self.conn.prepare(
-            "SELECT files.path, units.page, lines.x, lines.y, lines.w, lines.h, lines.text, lines.chars
+        let mut select = self.conn.prepare(&format!(
+            "SELECT {LINE_COLUMNS}, files.path, units.page, lines.text
              FROM lines JOIN units ON units.id = lines.unit_id JOIN files ON files.id = units.file_id",
-        )?;
+        ))?;
         let mut rows = select.query([])?;
         while let Some(row) = rows.next()? {
-            let line = Line {
-                bounds: Bounds {
-                    x: row.get(2)?,
-                    y: row.get(3)?,
-                    w: row.get(4)?,
-                    h: row.get(5)?,
-                },
-                chars: serde_json::from_str(row.get_ref(7)?.as_str()?)?,
-            };
+            let line = line_of(row)?;
             for found in query.find(&line) {
                 hits.push(Hit {
-                    path: PathBuf::from(row.get::<_, String>(0)?),
-                    page: row.get(1)?,
+                    path: PathBuf::from(row.get::<_, String>(5)?),
+                    page: row.get(6)?,
                     bounds: found.bounds,
-                    text: row.get(6)?,
+                    text: row.get(7)?,
                     score: found.score,
                 });
             }
@@ -243,6 +235,37 @@ impl Index {
         hits.sort_by(|a, b| b.score.total_cmp(&a.score));
         Ok(hits)
     }
+
+    /// All indexed lines of the file.
+    pub fn lines(&self, path: &Path) -> anyhow::Result<Vec<Line>> {
+        let mut lines = Vec::new();
+        let mut select = self.conn.prepare(&format!(
+            "SELECT {LINE_COLUMNS}
+             FROM lines JOIN units ON units.id = lines.unit_id JOIN files ON files.id = units.file_id
+             WHERE files.path = ?1 ORDER BY lines.id",
+        ))?;
+        let mut rows = select.query(params![path_str(path)?])?;
+        while let Some(row) = rows.next()? {
+            lines.push(line_of(row)?);
+        }
+        Ok(lines)
+    }
+}
+
+/// The columns a [Line] is stored in. [line_of] expects them first in a `SELECT`.
+const LINE_COLUMNS: &str = "lines.x, lines.y, lines.w, lines.h, lines.chars";
+
+/// The line of a row that was selected with [LINE_COLUMNS].
+fn line_of(row: &rusqlite::Row) -> anyhow::Result<Line> {
+    Ok(Line {
+        bounds: Bounds {
+            x: row.get(0)?,
+            y: row.get(1)?,
+            w: row.get(2)?,
+            h: row.get(3)?,
+        },
+        chars: serde_json::from_str(row.get_ref(4)?.as_str()?)?,
+    })
 }
 
 /// The id of the file's row, which is created when the file is not known yet.
@@ -343,6 +366,20 @@ mod tests {
         assert_eq!(hits[1].page, 3);
 
         assert!(index.search("有我").unwrap().is_empty());
+    }
+
+    #[test]
+    fn gives_the_lines_of_one_file() {
+        let (first, second) = (typed("first", BOUNDS), typed("second", BOUNDS));
+        let mut index = index_with(vec![first.clone(), second.clone()]);
+        let other = Path::new("/notes/b.rnote");
+        index
+            .insert_unit(other, unit(1, 0), &[typed("other", BOUNDS)])
+            .unwrap();
+
+        assert_eq!(index.lines(Path::new(PATH)).unwrap(), vec![first, second]);
+        assert_eq!(index.lines(other).unwrap().len(), 1);
+        assert!(index.lines(Path::new("/notes/c.rnote")).unwrap().is_empty());
     }
 
     #[test]

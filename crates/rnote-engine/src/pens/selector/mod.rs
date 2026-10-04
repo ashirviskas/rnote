@@ -72,6 +72,11 @@ pub(super) enum SelectorState {
         selection: Vec<StrokeKey>,
         selection_bounds: Aabb,
     },
+    /// A rectangle whose text can be copied. It holds no strokes: the text of a document is not in the store,
+    /// the app puts it together.
+    TextSelection {
+        bounds: Aabb,
+    },
 }
 
 impl Default for SelectorState {
@@ -120,6 +125,9 @@ impl PenBehaviour for Selector {
                     selection,
                     selection_bounds,
                 }
+            } else if let SelectorState::TextSelection { bounds } = self.state {
+                // A text selection does not depend on the store, it stays for as long as no strokes are selected
+                SelectorState::TextSelection { bounds }
             } else {
                 SelectorState::Idle
             };
@@ -304,6 +312,9 @@ impl DrawableOnDoc for Selector {
             SelectorState::ModifySelection {
                 selection_bounds, ..
             } => Some(selection_bounds.extend_by(Self::RESIZE_NODE_SIZE / total_zoom)),
+            SelectorState::TextSelection { bounds } => {
+                Some(bounds.loosened(Self::OUTLINE_STROKE_WIDTH / total_zoom))
+            }
         }
     }
 
@@ -349,7 +360,7 @@ impl DrawableOnDoc for Selector {
                             );
                         }
                     }
-                    SelectorStyle::Rectangle => {
+                    SelectorStyle::Rectangle | SelectorStyle::Text => {
                         if let Some(first) = path.first()
                             && let Some(last) = path.last()
                         {
@@ -455,6 +466,16 @@ impl DrawableOnDoc for Selector {
                     _ => {}
                 }
             }
+            SelectorState::TextSelection { bounds } => {
+                let select_rect = bounds.to_kurbo_rect();
+
+                cx.fill(select_rect, &Self::SELECTION_FILL_COLOR);
+                cx.stroke(
+                    select_rect,
+                    &Self::SELECTION_OUTLINE_COLOR,
+                    Self::OUTLINE_STROKE_WIDTH / total_zoom,
+                );
+            }
         }
 
         cx.restore().map_err(|e| anyhow::anyhow!("{e:?}"))?;
@@ -482,12 +503,20 @@ impl Selector {
     /// The fill color when drawing a selection
     const SELECTION_FILL_COLOR: piet::Color = color::GNOME_BRIGHTS[2].with_a8(13);
 
+    /// The rectangle on the document whose text is selected, when there is a text selection.
+    pub fn text_selection(&self) -> Option<Aabb> {
+        match self.state {
+            SelectorState::TextSelection { bounds } => Some(bounds),
+            _ => None,
+        }
+    }
+
     fn add_to_select_path(style: SelectorStyle, path: &mut Vec<Element>, element: Element) {
         match style {
             SelectorStyle::Polygon | SelectorStyle::Single | SelectorStyle::IntersectingPath => {
                 path.push(element);
             }
-            SelectorStyle::Rectangle => {
+            SelectorStyle::Rectangle | SelectorStyle::Text => {
                 path.push(element);
 
                 if path.len() > 2 {

@@ -8,4 +8,5 @@ rnote_ocr_sources = files(
     'lib.rs',
     'query.rs',
     'recognize.rs',
+    'select.rs',
 )

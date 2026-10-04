@@ -44,6 +44,13 @@
             <property name="icon-name">pen-selector-intersectingpath-symbolic</property>
           </object>
         </child>
+        <child>
+          <object class="GtkToggleButton" id="selectorstyle_text_toggle">
+            <property name="group">selectorstyle_polygon_toggle</property>
+            <property name="tooltip_text" translatable="yes">Select Text to Copy</property>
+            <property name="icon-name">pen-selector-text-symbolic</property>
+          </object>
+        </child>
       </object>
     </child>
     <child>

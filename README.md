@@ -129,6 +129,9 @@ search entry in the workspace browser (search button in the header, or `Ctrl+F`)
 - Search from the terminal with `rnote-cli search <text>`.
 - A Pdf that has a text layer keeps its text when it is imported, so its pages are found exactly and without
   recognition. `rnote-cli import note.rnote -i file.pdf` imports one from the terminal.
+- Text can be copied: with the selector style "Select Text to Copy", drag a rectangle over the page and press
+  `Ctrl+C`. Lines are cut at the edges of the rectangle. Handwriting and images give their text once the document
+  is saved.
 - Zhuyin (bopomofo) can be read too with the experimental setting "Read Zhuyin", or `rnote-cli index --zhuyin`.
 - The recognition models are part of the build, nothing needs to be downloaded. How it works:
   [crates/rnote-ocr](./crates/rnote-ocr/README.md).

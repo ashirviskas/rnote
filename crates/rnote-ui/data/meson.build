@@ -228,6 +228,7 @@ rnote_ui_gresources_icons_files = files(
     'icons/scalable/actions/pen-selector-rectangle-symbolic.svg',
     'icons/scalable/actions/pen-selector-single-symbolic.svg',
     'icons/scalable/actions/pen-selector-symbolic.svg',
+    'icons/scalable/actions/pen-selector-text-symbolic.svg',
     'icons/scalable/actions/pen-shaper-style-rough-symbolic.svg',
     'icons/scalable/actions/pen-shaper-style-smooth-symbolic.svg',
     'icons/scalable/actions/pen-shaper-symbolic.svg',

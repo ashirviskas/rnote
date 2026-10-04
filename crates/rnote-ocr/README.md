@@ -99,6 +99,22 @@ carries (typed text, Pdf text) without going through the index.
 among the candidates of its position. Whitespace, letter case and zhuyin tone marks are ignored. A hit covers exactly the matched
 characters. Hits on the most likely readings rank first, then by confidence.
 
+## Copying text
+
+The selector style "Select Text to Copy" keeps a rectangle on the page, and `Ctrl+C` copies the text inside it. The
+app puts the lines together: the ones the open document carries (typed text, Pdf text) as they are right now, and
+the ones `Index::lines(path)` has for the file (handwriting, images), without those the document gave already.
+
+`select::text_in(lines, area)` cuts them. A line takes part when its vertical middle is inside the area, and gives
+the characters whose horizontal middle is inside it: over `ABC` above `DEF`, a rectangle around the right two
+columns gives `BC\nEF`. Lines are put top to bottom; lines on one row (two columns, or the pieces a row was
+recognised in) left to right with a space between them. Of each character the most likely reading is taken.
+
+- Handwriting and images give text once the document is saved and indexed, at the place they had when it was last
+  saved.
+- Text that does not run left to right in an upright box (rotated text or pages) is cut by its bounding box only.
+- Across columns the text is read row by row, not column by column.
+
 ## Zhuyin (experimental)
 
 The recognition model file has a second output with 41 extra classes for the zhuyin symbols and tone marks.

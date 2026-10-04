@@ -818,6 +818,17 @@ impl Engine {
         self.store.selection_keys_unordered().is_empty()
     }
 
+    /// The rectangle on the document the selector holds as a text selection.
+    ///
+    /// The engine does not know all text of a document, recognised text is in the search index. Getting the text
+    /// inside the rectangle is left to the app.
+    pub fn text_selection(&self) -> Option<Aabb> {
+        match self.penholder.current_pen_ref() {
+            Pen::Selector(selector) => selector.text_selection(),
+            _ => None,
+        }
+    }
+
     pub fn change_selection_stroke_colors(&mut self, stroke_color: Color) -> WidgetFlags {
         self.store
             .change_stroke_colors(&self.store.selection_keys_as_rendered(), stroke_color)

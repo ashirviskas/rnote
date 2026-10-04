@@ -28,7 +28,7 @@ impl Selector {
         self.pos = Some(element.pos);
 
         let event_result = match &mut self.state {
-            SelectorState::Idle => {
+            SelectorState::Idle | SelectorState::TextSelection { .. } => {
                 // Deselect on start
                 let selection_keys = engine_view.store.selection_keys_as_rendered();
                 if !selection_keys.is_empty() {
@@ -421,6 +421,7 @@ impl Selector {
             },
             SelectorState::Selecting { path } => {
                 let mut progress = PenProgress::Finished;
+                let mut text_selection = None;
 
                 let new_selection = match engine_view.config.pens_config.selector_config.style {
                     SelectorStyle::Polygon => {
@@ -473,6 +474,17 @@ impl Selector {
                             vec![]
                         }
                     }
+                    SelectorStyle::Text => {
+                        if let Some(first) = path.first()
+                            && let Some(last) = path.last()
+                        {
+                            let bounds = Aabb::new_positive(first.pos, last.pos);
+                            if bounds.extents().min_element() > 0.0 {
+                                text_selection = Some(bounds);
+                            }
+                        }
+                        vec![]
+                    }
                 };
 
                 if !new_selection.is_empty() {
@@ -485,6 +497,11 @@ impl Selector {
                 }
 
                 widget_flags |= self.update_state(engine_view);
+
+                if let Some(bounds) = text_selection {
+                    self.state = SelectorState::TextSelection { bounds };
+                    progress = PenProgress::InProgress;
+                }
 
                 EventResult {
                     handled: true,
@@ -532,6 +549,11 @@ impl Selector {
                     progress: PenProgress::InProgress,
                 }
             }
+            SelectorState::TextSelection { .. } => EventResult {
+                handled: false,
+                propagate: EventPropagation::Proceed,
+                progress: PenProgress::InProgress,
+            },
         };
 
         (event_result, widget_flags)
@@ -567,6 +589,11 @@ impl Selector {
                     progress: PenProgress::InProgress,
                 }
             }
+            SelectorState::TextSelection { .. } => EventResult {
+                handled: false,
+                propagate: EventPropagation::Proceed,
+                progress: PenProgress::InProgress,
+            },
         };
 
         (event_result, widget_flags)
@@ -707,6 +734,30 @@ impl Selector {
                     },
                 }
             }
+            SelectorState::TextSelection { .. } => match keyboard_key {
+                KeyboardKey::Unicode('a') if modifier_keys.contains(&ModifierKey::KeyboardCtrl) => {
+                    self.select_all(engine_view, &mut widget_flags);
+
+                    EventResult {
+                        handled: true,
+                        propagate: EventPropagation::Stop,
+                        progress: PenProgress::InProgress,
+                    }
+                }
+                KeyboardKey::Escape => {
+                    self.state = SelectorState::Idle;
+                    EventResult {
+                        handled: true,
+                        propagate: EventPropagation::Stop,
+                        progress: PenProgress::Finished,
+                    }
+                }
+                _ => EventResult {
+                    handled: false,
+                    propagate: EventPropagation::Proceed,
+                    progress: PenProgress::InProgress,
+                },
+            },
         };
 
         (event_result, widget_flags)
@@ -732,11 +783,13 @@ impl Selector {
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::InProgress,
             },
-            SelectorState::ModifySelection { .. } => EventResult {
-                handled: false,
-                propagate: EventPropagation::Proceed,
-                progress: PenProgress::InProgress,
-            },
+            SelectorState::ModifySelection { .. } | SelectorState::TextSelection { .. } => {
+                EventResult {
+                    handled: false,
+                    propagate: EventPropagation::Proceed,
+                    progress: PenProgress::InProgress,
+                }
+            }
         };
 
         (event_result, widget_flags)
@@ -756,7 +809,7 @@ impl Selector {
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,
             },
-            SelectorState::Selecting { .. } => {
+            SelectorState::Selecting { .. } | SelectorState::TextSelection { .. } => {
                 self.state = SelectorState::Idle;
                 EventResult {
                     handled: true,
