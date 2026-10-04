@@ -1077,6 +1077,12 @@ impl RnAppWindow {
                 else {
                     return;
                 };
+                // A text selection holds no strokes, the text inside it is copied instead
+                let text_selection = canvas.engine_ref().text_selection();
+                if let Some(area) = text_selection {
+                    crate::doctext::copy_text(&appwindow, &canvas, area).await;
+                    return;
+                }
                 let receiver = canvas.engine_ref().fetch_clipboard_content();
                 let (content, widget_flags) = match receiver.await {
                     Ok(Ok((content, widget_flags))) => (content,widget_flags),
@@ -1109,6 +1115,10 @@ impl RnAppWindow {
                 else {
                     return;
                 };
+                // The text of a text selection cannot be cut, and the clipboard is to be left alone
+                if canvas.engine_ref().text_selection().is_some() {
+                    return;
+                }
                 let receiver = canvas.engine_mut().cut_clipboard_content();
                 let (content, widget_flags) = match receiver.await {
                     Ok(Ok((content, widget_flags))) => (content,widget_flags),

@@ -44,6 +44,7 @@ crates/rnote-ui/src/canvaswrapper.rs
 crates/rnote-ui/src/dialogs/export.rs
 crates/rnote-ui/src/dialogs/import.rs
 crates/rnote-ui/src/dialogs/mod.rs
+crates/rnote-ui/src/doctext.rs
 crates/rnote-ui/src/penssidebar/shaperpage.rs
 crates/rnote-ui/src/settingspanel/mod.rs
 crates/rnote-ui/src/settingspanel/penshortcutmodels.rs

@@ -24,6 +24,9 @@ pub enum SelectorStyle {
     Single,
     #[serde(rename = "intersectingpath")]
     IntersectingPath,
+    /// Selects the text inside a rectangle instead of strokes.
+    #[serde(rename = "text")]
+    Text,
 }
 
 impl Default for SelectorStyle {

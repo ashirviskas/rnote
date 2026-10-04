@@ -18,6 +18,7 @@ pub(crate) mod colorpicker;
 pub(crate) mod config;
 pub(crate) mod contextmenu;
 pub(crate) mod dialogs;
+pub(crate) mod doctext;
 pub(crate) mod env;
 pub(crate) mod filetype;
 pub(crate) mod globals;

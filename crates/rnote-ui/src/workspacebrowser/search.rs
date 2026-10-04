@@ -1,14 +1,14 @@
 // Imports
 use crate::RnCanvas;
 use crate::appwindow::RnAppWindow;
+use crate::doctext::{self, DocumentLine};
 use crate::workspacebrowser::RnWorkspaceBrowser;
 use adw::prelude::*;
 use gettextrs::gettext;
 use gtk4::{gio, glib, glib::clone, subclass::prelude::*};
 use p2d::bounding_volume::Aabb;
 use p2d::math::Vector2;
-use rnote_compose::SplitOrder;
-use rnote_ocr::{Bounds, CharBox, Hit, Index, Line, Query};
+use rnote_ocr::{Hit, Index, Query};
 use std::cell::Cell;
 use tracing::error;
 
@@ -217,51 +217,22 @@ impl RnWorkspaceBrowser {
 /// Searches the text the document carries: typed text and the text of imported Pdf pages. That needs no
 /// recognition, so it is done on the spot.
 fn document_results(canvas: &RnCanvas, query: &Query) -> Vec<SearchResult> {
-    let path = canvas
-        .output_file()
-        .and_then(|file| file.path())
-        .map(|path| path.canonicalize().unwrap_or(path))
-        .unwrap_or_default();
+    let path = doctext::index_path(canvas).unwrap_or_default();
     let title = canvas.doc_title_display();
 
     let mut results = Vec::new();
-    for unit in canvas
-        .engine_ref()
-        .extract_text_units(SplitOrder::default())
-    {
-        for stroke in unit.content.strokes.iter() {
-            let text_lines = stroke.text_lines().unwrap_or_else(|e| {
-                error!("Getting the text of a stroke failed, Err: {e:?}");
-                Vec::new()
-            });
-            for text_line in text_lines {
-                let extents = text_line.bounds.extents();
-                let line = Line {
-                    bounds: Bounds {
-                        x: text_line.bounds.mins.x,
-                        y: text_line.bounds.mins.y,
-                        w: extents.x,
-                        h: extents.y,
-                    },
-                    chars: text_line
-                        .chars
-                        .iter()
-                        .map(|c| CharBox::exact(c.ch, c.bounds.mins.x, c.bounds.maxs.x))
-                        .collect(),
-                };
-                results.extend(query.find(&line).into_iter().map(|found| SearchResult {
-                    hit: Hit {
-                        path: path.clone(),
-                        page: unit.page as u32,
-                        bounds: found.bounds,
-                        text: line.text(),
-                        score: found.score,
-                    },
-                    title: title.clone(),
-                    canvas: Some(canvas.downgrade()),
-                }));
-            }
-        }
+    for DocumentLine { page, line } in doctext::document_lines(canvas) {
+        results.extend(query.find(&line).into_iter().map(|found| SearchResult {
+            hit: Hit {
+                path: path.clone(),
+                page,
+                bounds: found.bounds,
+                text: line.text(),
+                score: found.score,
+            },
+            title: title.clone(),
+            canvas: Some(canvas.downgrade()),
+        }));
     }
     results
 }
@@ -272,10 +243,7 @@ fn document_results(canvas: &RnCanvas, query: &Query) -> Vec<SearchResult> {
 fn merge_results(mut in_document: Vec<SearchResult>, indexed: Vec<Hit>) -> Vec<SearchResult> {
     let is_duplicate = |hit: &Hit| {
         in_document.iter().any(|known| {
-            known.hit.path == hit.path
-                && (known.hit.bounds.x - hit.bounds.x).abs() < 1.0
-                && (known.hit.bounds.y - hit.bounds.y).abs() < 1.0
-                && (known.hit.bounds.w - hit.bounds.w).abs() < 1.0
+            known.hit.path == hit.path && doctext::same_place(known.hit.bounds, hit.bounds)
         })
     };
     let indexed = indexed
