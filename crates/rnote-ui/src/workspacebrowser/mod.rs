@@ -13,12 +13,13 @@ pub(crate) use workspacesbar::RnWorkspacesBar;
 // Imports
 use crate::appwindow::RnAppWindow;
 use gtk4::{
-    Button, CompositeTemplate, ConstantExpression, CustomFilter, CustomSorter, DirectoryList,
-    FileFilter, FilterChange, FilterListModel, Grid, Label, ListBox, ListItem, ListView,
-    MultiSorter, PropertyExpression, ScrolledWindow, SearchEntry, Separator, SignalListItemFactory,
-    SingleSelection, SortListModel, SorterChange, Widget, gdk, gio, glib, glib::clone,
-    glib::closure, prelude::*, subclass::prelude::*,
+    AnyFilter, Button, CompositeTemplate, ConstantExpression, CustomFilter, CustomSorter,
+    DirectoryList, FileFilter, FilterChange, FilterListModel, Grid, Label, ListBox, ListItem,
+    ListView, MultiSorter, PropertyExpression, ScrolledWindow, SearchEntry, Separator,
+    SignalListItemFactory, SingleSelection, SortListModel, SorterChange, Widget, gdk, gio, glib,
+    glib::clone, glib::closure, prelude::*, subclass::prelude::*,
 };
+use rnote_engine::notefolder::NoteFolder;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use tracing::warn;
@@ -449,13 +450,20 @@ fn create_files_list_row_factory(appwindow: &RnAppWindow) -> SignalListItemFacto
                                                                          fileinfo_obj: Option<
                     glib::Object,
                 >| {
-                    if let Some(fileinfo_obj) = fileinfo_obj
-                        && let Some(themed_icon) = fileinfo_obj
-                            .downcast::<gio::FileInfo>()
-                            .unwrap()
-                            .attribute_object("standard::icon")
+                    if let Some(fileinfo) =
+                        fileinfo_obj.and_then(|obj| obj.downcast::<gio::FileInfo>().ok())
                     {
-                        return themed_icon.downcast::<gio::ThemedIcon>().unwrap();
+                        // A note folder looks like the note it is
+                        let icon = if is_note_folder(&fileinfo) {
+                            Some(gio::content_type_get_icon("application/rnote").upcast())
+                        } else {
+                            fileinfo.attribute_object("standard::icon")
+                        };
+                        if let Some(themed_icon) =
+                            icon.and_then(|icon| icon.downcast::<gio::ThemedIcon>().ok())
+                        {
+                            return themed_icon;
+                        }
                     }
 
                     gio::ThemedIcon::from_names(&[
@@ -512,6 +520,22 @@ fn create_files_list_header_factory(_appwindow: &RnAppWindow) -> SignalListItemF
     factory
 }
 
+/// Whether the file is a note folder, which is a note although it is a directory.
+fn is_note_folder(fileinfo: &gio::FileInfo) -> bool {
+    fileinfo.file_type() == gio::FileType::Directory
+        && fileinfo
+            .name()
+            .extension()
+            .is_some_and(|ext| ext == NoteFolder::EXTENSION)
+}
+
+/// Lets note folders through, or all files but them.
+fn create_note_folder_filter(note_folders: bool) -> CustomFilter {
+    CustomFilter::new(move |file| {
+        is_note_folder(file.downcast_ref::<gio::FileInfo>().unwrap()) == note_folders
+    })
+}
+
 fn create_folders_filter() -> EveryFilter {
     let file_filter = FileFilter::new();
     file_filter.add_mime_type("inode/directory");
@@ -520,6 +544,7 @@ fn create_folders_filter() -> EveryFilter {
     let every_filter = EveryFilter::new();
     every_filter.append(file_filter);
     every_filter.append(hidden_filter);
+    every_filter.append(create_note_folder_filter(false));
     every_filter
 }
 
@@ -534,9 +559,12 @@ fn create_notes_filter() -> EveryFilter {
     file_filter.add_mime_type("application/rnote");
     file_filter.add_suffix("rnote");
     let hidden_filter = create_hidden_filter();
+    let note_filter = AnyFilter::new();
+    note_filter.append(file_filter);
+    note_filter.append(create_note_folder_filter(true));
 
     let every_filter = EveryFilter::new();
-    every_filter.append(file_filter);
+    every_filter.append(note_filter);
     every_filter.append(hidden_filter);
     every_filter
 }

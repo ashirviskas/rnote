@@ -1,14 +1,16 @@
 // Imports
-use crate::{create, export, import, index, search, test, thumbnail};
+use crate::{convert, create, export, import, index, search, test, thumbnail};
 use anyhow::Context;
 use clap::Parser;
 use rnote_compose::SplitOrder;
 use rnote_engine::SelectionCollision;
+use rnote_engine::engine::EngineSnapshot;
 use rnote_engine::engine::export::{
     DocExportFormat, DocPagesExportFormat, DocPagesExportPrefs, SelectionExportFormat,
     SelectionExportPrefs,
 };
 use rnote_engine::engine::import::XoppImportPrefs;
+use rnote_engine::notefolder::{Device, NoteFolder};
 use smol::fs::File;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::path::{Path, PathBuf};
@@ -37,10 +39,10 @@ pub(crate) enum Command {
         /// The rnote files.
         rnote_files: Vec<PathBuf>,
     },
-    /// Imports the specified input file and saves it as a rnote save file.{n}
+    /// Imports the specified input file and saves it as a rnote save file or into a note folder.{n}
     /// `.xopp` and `.pdf` files can be imported. The text of a Pdf is kept with its pages and can be searched.
     Import {
-        /// The rnote save file.
+        /// The rnote save file or note folder. It has to exist, and becomes what was imported.
         rnote_file: PathBuf,
         /// The import input file.
         #[arg(short = 'i', long)]
@@ -93,10 +95,19 @@ pub(crate) enum Command {
         /// The new rnote file path.
         rnote_file: PathBuf,
     },
-    /// Reads the text of rnote files (handwriting, images, typed text) and adds it to the search index.{n}
-    /// Only the parts of a file that changed since it was last indexed are read again.
+    /// Converts a note between the two forms it can be saved in: a rnote file, and a note folder for folders
+    /// that are synced between devices.{n}
+    /// An output path that ends in `.rnoted` gives a note folder, any other a rnote file.
+    Convert {
+        /// The note: a rnote file or a note folder.
+        input: PathBuf,
+        /// The new note. It must not exist yet.
+        output: PathBuf,
+    },
+    /// Reads the text of notes (handwriting, images, typed text) and adds it to the search index.{n}
+    /// Only the parts of a note that changed since it was last indexed are read again.
     Index {
-        /// The rnote files or folders. Folders are searched for rnote files recursively.
+        /// The rnote files, note folders or folders. Folders are searched for notes recursively.
         #[arg(required = true)]
         paths: Vec<PathBuf>,
         /// Also read zhuyin (bopomofo). Experimental: a zhuyin symbol can take the place of a character that
@@ -312,6 +323,9 @@ pub(crate) async fn run() -> anyhow::Result<()> {
             create::run_create(&new_rnote_file).await?;
             println!("File creation finished!");
         }
+        Command::Convert { input, output } => {
+            convert::run_convert(&input, &output).await?;
+        }
         Command::Index { paths, zhuyin } => {
             index::run_index(&paths, zhuyin).await?;
         }
@@ -341,6 +355,16 @@ pub(crate) fn new_progressbar(message: String) -> indicatif::ProgressBar {
     pb.set_draw_target(indicatif::ProgressDrawTarget::stdout());
     pb.enable_steady_tick(Duration::from_millis(8));
     pb
+}
+
+/// Loads a note: a rnote file, a note folder, or the entry file of a note folder.
+pub(crate) async fn load_note(note: impl AsRef<Path>) -> anyhow::Result<EngineSnapshot> {
+    let note = note.as_ref();
+    if let Some(dir) = NoteFolder::folder_of(note) {
+        let (_, engine_snapshot) = NoteFolder::load(&dir, Device::this()?)?;
+        return Ok(engine_snapshot);
+    }
+    EngineSnapshot::load_from_rnote_bytes(read_bytes_from_file(note).await?).await
 }
 
 pub(crate) async fn read_bytes_from_file(file_path: impl AsRef<Path>) -> anyhow::Result<Vec<u8>> {

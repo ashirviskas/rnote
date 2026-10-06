@@ -1,5 +1,6 @@
 // Imports
 use gtk4::{gio, prelude::*};
+use rnote_engine::notefolder::NoteFolder;
 use tracing::warn;
 
 /// File types supported by Rnote.
@@ -7,6 +8,8 @@ use tracing::warn;
 pub(crate) enum FileType {
     Folder,
     RnoteFile,
+    /// A note folder, or the entry file of one.
+    NoteFolder,
     VectorImageFile,
     BitmapImageFile,
     XoppFile,
@@ -17,6 +20,14 @@ pub(crate) enum FileType {
 
 impl FileType {
     pub(crate) fn lookup_file_type(file: &gio::File) -> Self {
+        // A note folder is a note, not a folder to show the files of
+        if file
+            .path()
+            .is_some_and(|path| NoteFolder::folder_of(&path).is_some())
+        {
+            return Self::NoteFolder;
+        }
+
         if let Ok(info) = file.query_info(
             "standard::*",
             gio::FileQueryInfoFlags::NONE,

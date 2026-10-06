@@ -2,6 +2,7 @@
 use crate::document::background;
 use crate::engine::import::XoppImportPrefs;
 use crate::fileformats::{FileFormatLoader, rnoteformat, xoppformat};
+use crate::notefolder::Files;
 use crate::store::{ChronoComponent, StrokeKey};
 use crate::strokes::Stroke;
 use crate::{Camera, Document, Engine};
@@ -32,6 +33,9 @@ pub struct EngineSnapshot {
     pub chrono_components: Arc<SecondaryMap<StrokeKey, Arc<ChronoComponent>>>,
     #[serde(rename = "chrono_counter")]
     pub chrono_counter: u32,
+    /// The files the strokes refer to that are held in memory, see [Engine::files].
+    #[serde(skip)]
+    pub files: Files,
 }
 
 impl Default for EngineSnapshot {
@@ -42,6 +46,7 @@ impl Default for EngineSnapshot {
             stroke_components: Arc::new(SlotMap::with_key()),
             chrono_components: Arc::new(SecondaryMap::new()),
             chrono_counter: 0,
+            files: Files::default(),
         }
     }
 }

@@ -14,6 +14,7 @@ use rnote_engine::engine::export::{
     DocExportFormat, DocExportPrefs, DocPagesExportFormat, DocPagesExportPrefs,
     SelectionExportFormat, SelectionExportPrefs,
 };
+use rnote_engine::notefolder::NoteFolder;
 use std::cell::RefCell;
 use std::rc::Rc;
 use tracing::{debug, error};
@@ -31,7 +32,9 @@ pub(crate) async fn dialog_save_doc_as(appwindow: &RnAppWindow, canvas: &RnCanva
     if cfg!(target_os = "macos") {
         filter.add_suffix("rnote");
     }
-    filter.set_name(Some(&gettext(".rnote")));
+    // A name that ends in `.rnoted` saves the document as a note folder
+    filter.add_suffix(NoteFolder::EXTENSION);
+    filter.set_name(Some(&gettext(".rnote, .rnoted")));
 
     // create the list of filters
     let filter_list = gio::ListStore::new::<FileFilter>();
@@ -53,7 +56,21 @@ pub(crate) async fn dialog_save_doc_as(appwindow: &RnAppWindow, canvas: &RnCanva
             filedialog.set_initial_folder(Some(&gio::File::for_path(current_workspace_dir)));
         }
 
-        let file_name = canvas.doc_title_display() + ".rnote";
+        // In the library, which is the place for folders that are synced, a note folder is the usual choice
+        let in_library = appwindow
+            .sidebar()
+            .workspacebrowser()
+            .dir_list_dir()
+            .zip(crate::library::dir())
+            .is_some_and(|(dir, library_dir)| {
+                dir.canonicalize().unwrap_or(dir).starts_with(library_dir)
+            });
+        let extension = if in_library {
+            NoteFolder::EXTENSION
+        } else {
+            "rnote"
+        };
+        let file_name = format!("{}.{extension}", canvas.doc_title_display());
         filedialog.set_initial_name(Some(&file_name));
     }
 

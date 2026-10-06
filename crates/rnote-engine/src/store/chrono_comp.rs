@@ -1,6 +1,7 @@
 // Imports
 use super::{StrokeKey, StrokeStore};
 use p2d::bounding_volume::Aabb;
+use rand::RngExt;
 use rayon::slice::ParallelSliceMut;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -61,9 +62,24 @@ impl Ord for StrokeLayer {
     }
 }
 
+/// Identifies a stroke for as long as it exists, on every device its note is opened on.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct StrokeId(u64);
+
+impl StrokeId {
+    /// A new id. It is random, so that strokes made on different devices do not get the same one.
+    pub fn random() -> Self {
+        Self(rand::rng().random())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
 #[serde(default, rename = "chrono_component")]
 pub struct ChronoComponent {
+    /// Stays with the stroke. Versions of a note that were changed on different devices are put together by it.
+    #[serde(rename = "id", default = "StrokeId::random")]
+    pub id: StrokeId,
     #[serde(rename = "t")]
     t: u32,
     #[serde(rename = "layer")]
@@ -72,16 +88,21 @@ pub struct ChronoComponent {
 
 impl Default for ChronoComponent {
     fn default() -> Self {
-        Self {
-            t: 0,
-            layer: StrokeLayer::default(),
-        }
+        Self::new(0, StrokeLayer::default())
     }
 }
 
 impl ChronoComponent {
     pub(crate) fn new(t: u32, layer: StrokeLayer) -> Self {
-        Self { t, layer }
+        Self {
+            id: StrokeId::random(),
+            t,
+            layer,
+        }
+    }
+
+    pub(crate) fn t(&self) -> u32 {
+        self.t
     }
 }
 
@@ -124,7 +145,11 @@ impl StrokeStore {
                 if layer_order != std::cmp::Ordering::Equal {
                     layer_order
                 } else {
-                    first_chrono.t.cmp(&second_chrono.t)
+                    // Strokes that were made on different devices can have the same `t`
+                    first_chrono
+                        .t
+                        .cmp(&second_chrono.t)
+                        .then(first_chrono.id.cmp(&second_chrono.id))
                 }
             } else {
                 std::cmp::Ordering::Equal

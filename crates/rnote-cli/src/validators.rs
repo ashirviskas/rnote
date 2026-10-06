@@ -1,4 +1,13 @@
+use rnote_engine::notefolder::NoteFolder;
 use std::path::Path;
+
+/// A note is a rnote file, a note folder, or the entry file of a note folder.
+pub(crate) fn path_is_note(path: &Path) -> anyhow::Result<()> {
+    if NoteFolder::folder_of(path).is_some() {
+        return Ok(());
+    }
+    file_has_ext(path, "rnote")
+}
 
 pub(crate) fn path_is_dir(path: &Path) -> anyhow::Result<()> {
     if !path.is_dir() {

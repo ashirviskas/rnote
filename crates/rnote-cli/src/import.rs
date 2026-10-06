@@ -3,6 +3,7 @@ use crate::{cli, validators};
 use p2d::math::Vector2;
 use rnote_engine::Engine;
 use rnote_engine::engine::{EngineConfigShared, EngineSnapshot};
+use rnote_engine::notefolder::{Device, NoteFolder};
 use std::path::Path;
 
 pub(crate) async fn run_import(
@@ -10,7 +11,7 @@ pub(crate) async fn run_import(
     input_file: &Path,
     xopp_dpi: f64,
 ) -> anyhow::Result<()> {
-    validators::file_has_ext(rnote_file, "rnote")?;
+    validators::path_is_note(rnote_file)?;
     // Xopp files don't require file extensions
     validators::path_is_file(input_file)?;
 
@@ -76,6 +77,12 @@ pub(crate) async fn import_file(
         let xopp_import_prefs = config.read().import_prefs.xopp_import_prefs;
         let snapshot = EngineSnapshot::load_from_xopp_bytes(input_bytes, xopp_import_prefs).await?;
         let _ = engine.load_snapshot(snapshot);
+    }
+    if let Some(dir) = NoteFolder::folder_of(rnote_file) {
+        // The note becomes what was imported, as a rnote file does. For a note folder that is a new batch.
+        let (mut note_folder, _) = NoteFolder::load(&dir, Device::this()?)?;
+        note_folder.save(&engine.take_snapshot())?;
+        return Ok(());
     }
     let rnote_bytes = engine.save_as_rnote_bytes(rnote_file_name).await??;
     cli::create_overwrite_file_w_bytes(&rnote_file, &rnote_bytes).await?;

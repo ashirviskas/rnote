@@ -2,16 +2,17 @@
 use super::RnCanvas;
 use crate::RnAppWindow;
 use futures::channel::oneshot;
-use gtk4::{gio, prelude::*};
+use gtk4::{gio, prelude::*, subclass::prelude::*};
 use p2d::math::Vector2;
 use rnote_compose::ext::Vector2Ext;
 use rnote_engine::WidgetFlags;
 use rnote_engine::engine::export::{DocExportPrefs, DocPagesExportPrefs, SelectionExportPrefs};
 use rnote_engine::engine::{EngineSnapshot, StrokeContent};
+use rnote_engine::notefolder::{Device, NoteFolder};
 use rnote_engine::strokes::Stroke;
 use rnote_engine::strokes::resize::ImageSizeOption;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::{debug, error};
 
 impl RnCanvas {
@@ -30,12 +31,44 @@ impl RnCanvas {
         P: AsRef<Path>,
     {
         let engine_snapshot = EngineSnapshot::load_from_rnote_bytes(bytes).await?;
+        let file_path = file_path.map(|path| path.as_ref().to_path_buf());
+        Ok(self.load_in_engine_snapshot(engine_snapshot, file_path, None))
+    }
+
+    /// Loads a note folder and imports it into the engine. The folder is tidied on the way.
+    ///
+    /// See [Self::load_in_rnote_bytes] for why the function returns `WidgetFlags`.
+    pub(crate) async fn load_in_note_folder(&self, dir: PathBuf) -> anyhow::Result<WidgetFlags> {
+        let device = Device::this()?;
+        let load = blocking::unblock({
+            let dir = dir.clone();
+            move || {
+                let (mut note_folder, engine_snapshot) = NoteFolder::load(&dir, device)?;
+                // What is tidied away was no part of the note any more, so the snapshot stays right
+                if let Err(e) = note_folder.tidy() {
+                    error!("Tidying the note folder {dir:?} failed, Err: {e:?}");
+                }
+                anyhow::Ok((note_folder, engine_snapshot))
+            }
+        });
+        let (note_folder, engine_snapshot) = load.await?;
+        Ok(self.load_in_engine_snapshot(engine_snapshot, Some(dir), Some(note_folder)))
+    }
+
+    /// Imports the snapshot of a note that was loaded from the path into the engine.
+    fn load_in_engine_snapshot(
+        &self,
+        engine_snapshot: EngineSnapshot,
+        path: Option<PathBuf>,
+        note_folder: Option<NoteFolder>,
+    ) -> WidgetFlags {
         let mut widget_flags = self.engine_mut().load_snapshot(engine_snapshot);
         widget_flags |= self
             .engine_mut()
             .set_scale_factor(self.scale_factor() as f64);
 
-        self.set_output_file(file_path.map(gio::File::for_path));
+        self.imp().note_folder.replace(note_folder);
+        self.set_output_file(path.map(gio::File::for_path));
         self.dismiss_output_file_modified_toast();
         self.set_unsaved_changes(false);
         self.set_empty(false);
@@ -43,7 +76,7 @@ impl RnCanvas {
             crate::indexer::queue(output_filepath);
         }
 
-        Ok(widget_flags)
+        widget_flags
     }
 
     /// Reload the engine from the file that is set as origin file.
@@ -55,10 +88,17 @@ impl RnCanvas {
                 "Failed to reload file from disk, no file path saved."
             ));
         };
-        let (bytes, _) = output_file.load_bytes_future().await?;
-        let widget_flags = self
-            .load_in_rnote_bytes(bytes.to_vec(), output_file.path())
-            .await?;
+        let note_folder = output_file
+            .path()
+            .and_then(|path| NoteFolder::folder_of(&path));
+        let widget_flags = match note_folder {
+            Some(dir) => self.load_in_note_folder(dir).await?,
+            None => {
+                let (bytes, _) = output_file.load_bytes_future().await?;
+                self.load_in_rnote_bytes(bytes.to_vec(), output_file.path())
+                    .await?
+            }
+        };
         self.emit_handle_widget_flags(widget_flags);
         Ok(())
     }
@@ -235,9 +275,12 @@ impl RnCanvas {
             self.set_save_in_progress(false);
             anyhow::anyhow!("Could not retrieve basename for file: `{file:?}`.")
         })?;
-        let rnote_bytes_receiver = self
-            .engine_ref()
-            .save_as_rnote_bytes(basename.to_string_lossy().to_string());
+        // A note folder that exists, or the name of one that is to be made
+        let to_note_folder = NoteFolder::folder_of(&filepath).is_some()
+            || (!filepath.exists()
+                && filepath
+                    .extension()
+                    .is_some_and(|ext| ext == NoteFolder::EXTENSION));
 
         let mut skip_set_output_file = false;
         if let Some(output_filepath) = self.output_file().and_then(|f| f.path())
@@ -249,10 +292,18 @@ impl RnCanvas {
         self.dismiss_output_file_modified_toast();
 
         let file_write_operation = async {
+            if to_note_folder {
+                return self.save_to_note_folder(&filepath).await;
+            }
+            let rnote_bytes_receiver = self
+                .engine_ref()
+                .save_as_rnote_bytes(basename.to_string_lossy().to_string());
             let bytes = rnote_bytes_receiver.await??;
             // The `output_file_expect_write` should theoretically be reset to `false` by the file watcher later.
             self.set_output_file_expect_write(true);
-            crate::utils::atomic_save_to_file_future(&filepath, bytes).await
+            crate::utils::atomic_save_to_file_future(&filepath, bytes).await?;
+            self.imp().note_folder.take();
+            Ok(())
         };
 
         if let Err(e) = file_write_operation.await {
@@ -277,6 +328,39 @@ impl RnCanvas {
         crate::indexer::queue(filepath);
 
         Ok(true)
+    }
+
+    /// Saves what changed in the document as a new batch of the note folder.
+    ///
+    /// A note folder that is not there yet is made. One that is there but not the one the document is open
+    /// from gets the document as its new state.
+    async fn save_to_note_folder(&self, dir: &Path) -> anyhow::Result<()> {
+        let engine_snapshot = self.engine_ref().take_snapshot();
+        let device = Device::this()?;
+        let exists = NoteFolder::folder_of(dir).is_some();
+        let open = self.imp().note_folder.take().filter(|note_folder| {
+            exists && crate::utils::paths_abs_eq(note_folder.dir(), dir).unwrap_or(false)
+        });
+
+        let dir = dir.to_path_buf();
+        let save = blocking::unblock(move || {
+            let note_folder = match open {
+                Some(note_folder) => Ok(note_folder),
+                None if exists => {
+                    NoteFolder::load(&dir, device).map(|(note_folder, _)| note_folder)
+                }
+                None => NoteFolder::create(&dir, device),
+            };
+            let mut note_folder = match note_folder {
+                Ok(note_folder) => note_folder,
+                Err(e) => return (None, Err(e)),
+            };
+            let saved = note_folder.save(&engine_snapshot).map(|_| ());
+            (Some(note_folder), saved)
+        });
+        let (note_folder, saved) = save.await;
+        self.imp().note_folder.replace(note_folder);
+        saved
     }
 
     pub(crate) async fn export_doc(

@@ -5,11 +5,11 @@ use anyhow::Context;
 use p2d::bounding_volume::Aabb;
 use p2d::math::Vector2;
 use rnote_compose::SplitOrder;
+use rnote_engine::engine::EngineConfigShared;
 use rnote_engine::engine::export::{
     DocExportFormat, DocExportPrefs, DocPagesExportFormat, DocPagesExportPrefs,
     SelectionExportFormat, SelectionExportPrefs,
 };
-use rnote_engine::engine::{EngineConfigShared, EngineSnapshot};
 use rnote_engine::{Engine, SelectionCollision};
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
@@ -66,7 +66,7 @@ pub(crate) async fn run_export(
                 ));
             };
 
-            validators::file_has_ext(rnote_file, "rnote")?;
+            validators::path_is_note(rnote_file)?;
             let output_file = get_output_file_path(
                 output_file,
                 on_conflict,
@@ -126,7 +126,7 @@ pub(crate) async fn run_export(
                 .collect::<Vec<PathBuf>>();
 
             for (rnote_file, output_file) in rnote_files.iter().zip(output_files.iter()) {
-                validators::file_has_ext(rnote_file, "rnote")?;
+                validators::path_is_note(rnote_file)?;
                 let output_file = match get_output_file_path(
                     output_file,
                     on_conflict,
@@ -542,8 +542,7 @@ pub(crate) async fn export_to_file(
     on_conflict_overwrite: &mut Option<OnConflict>,
     open: bool,
 ) -> anyhow::Result<()> {
-    let rnote_bytes = cli::read_bytes_from_file(&rnote_file).await?;
-    let engine_snapshot = EngineSnapshot::load_from_rnote_bytes(rnote_bytes).await?;
+    let engine_snapshot = cli::load_note(&rnote_file).await?;
     let _ = engine.load_snapshot(engine_snapshot);
 
     match export_command {

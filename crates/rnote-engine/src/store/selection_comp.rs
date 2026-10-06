@@ -46,14 +46,24 @@ impl StrokeStore {
     }
 
     /// Set if the stroke is currently selected.
+    ///
+    /// A stroke that becomes selected becomes the last in the chronological order, and stays there when it is
+    /// deselected. Nothing else changes its place: not deselecting it, and not selecting it when it is selected
+    /// already. What is not touched does not change, which is what lets a note folder save the changed strokes
+    /// only.
     pub(crate) fn set_selected(&mut self, key: StrokeKey, selected: bool) {
+        if self.selected(key) == Some(selected) {
+            return;
+        }
         if let Some(selection_comp) = Arc::make_mut(&mut self.selection_components)
             .get_mut(key)
             .map(Arc::make_mut)
         {
             selection_comp.selected = selected;
 
-            self.update_chrono_to_last(key);
+            if selected {
+                self.update_chrono_to_last(key);
+            }
         }
     }
 

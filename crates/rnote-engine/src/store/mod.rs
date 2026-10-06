@@ -7,7 +7,7 @@ pub mod stroke_comp;
 pub mod trash_comp;
 
 // Re-exports
-pub use chrono_comp::ChronoComponent;
+pub use chrono_comp::{ChronoComponent, StrokeId};
 use keytree::KeyTree;
 pub use render_comp::RenderComponent;
 pub use selection_comp::SelectionComponent;

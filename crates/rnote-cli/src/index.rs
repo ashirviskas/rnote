@@ -5,8 +5,8 @@ use image::RgbImage;
 use rnote_compose::SplitOrder;
 use rnote_compose::shapes::Shapeable;
 use rnote_engine::Engine;
-use rnote_engine::engine::EngineSnapshot;
 use rnote_engine::engine::export::{TextLayer, TextUnit};
+use rnote_engine::notefolder::NoteFolder;
 use rnote_ocr::{Bounds, CharBox, FileStamp, Index, Line, Recognizer, Source, Unit};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -28,7 +28,7 @@ pub(crate) async fn run_index(paths: &[PathBuf], zhuyin: bool) -> anyhow::Result
     let mut failed = 0;
     for rnote_file in rnote_files(paths)? {
         let file_disp = rnote_file.display().to_string();
-        let stamp = FileStamp::of(&rnote_file, zhuyin)?;
+        let stamp = FileStamp::of(&stamp_path(&rnote_file), zhuyin)?;
         if index.is_current(&rnote_file, stamp)? {
             continue;
         }
@@ -67,12 +67,24 @@ pub(crate) async fn run_index(paths: &[PathBuf], zhuyin: bool) -> anyhow::Result
     Ok(())
 }
 
-/// The rnote files among the paths. Folders are searched recursively.
+/// The file whose state tells whether a note changed: the rnote file itself, or of a note folder the directory of
+/// its batches, which changes with every batch that is written or removed.
+fn stamp_path(note: &Path) -> PathBuf {
+    if note.is_dir() {
+        note.join("ink")
+    } else {
+        note.to_path_buf()
+    }
+}
+
+/// The notes among the paths: rnote files and note folders. Folders are searched recursively.
 fn rnote_files(paths: &[PathBuf]) -> anyhow::Result<Vec<PathBuf>> {
     fn collect(dir: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()> {
         for entry in std::fs::read_dir(dir)? {
             let path = entry?.path();
-            if path.is_dir() {
+            if NoteFolder::folder_of(&path).is_some() {
+                files.push(path);
+            } else if path.is_dir() {
                 collect(&path, files)?;
             } else if path.extension().is_some_and(|ext| ext == "rnote") {
                 files.push(path);
@@ -87,7 +99,9 @@ fn rnote_files(paths: &[PathBuf]) -> anyhow::Result<Vec<PathBuf>> {
         let path = path
             .canonicalize()
             .with_context(|| format!("Path \"{}\" not found.", path.display()))?;
-        if path.is_dir() {
+        if let Some(note_folder) = NoteFolder::folder_of(&path) {
+            files.push(note_folder);
+        } else if path.is_dir() {
             collect(&path, &mut files)?;
         } else {
             validators::file_has_ext(&path, "rnote")?;
@@ -105,8 +119,7 @@ async fn index_file(
     stamp: FileStamp,
     progressbar: &indicatif::ProgressBar,
 ) -> anyhow::Result<usize> {
-    let rnote_bytes = cli::read_bytes_from_file(rnote_file).await?;
-    let engine_snapshot = EngineSnapshot::load_from_rnote_bytes(rnote_bytes).await?;
+    let engine_snapshot = cli::load_note(rnote_file).await?;
     let mut engine = Engine::default();
     let _ = engine.load_snapshot(engine_snapshot);
 
