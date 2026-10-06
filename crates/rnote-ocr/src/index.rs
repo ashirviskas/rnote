@@ -8,7 +8,7 @@ use crate::{Bounds, Hit, Line, Query, Unit};
 use anyhow::Context;
 use rusqlite::{Connection, params};
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 /// What a file was indexed from: its state on disk, and whether zhuyin was read. A file is looked at again when
@@ -208,18 +208,29 @@ impl Index {
         Ok(missing.len())
     }
 
-    /// Finds the query in all indexed lines, the best hits first. See [Query::find] for what matches.
-    pub fn search(&self, query: &str) -> anyhow::Result<Vec<Hit>> {
+    /// Finds the query in the indexed lines, the best hits first. See [Query::find] for what matches.
+    ///
+    /// With a scope, only the file at that path or the files below that folder are searched.
+    pub fn search(&self, query: &str, scope: Option<&Path>) -> anyhow::Result<Vec<Hit>> {
         let Some(query) = Query::new(query) else {
             return Ok(Vec::new());
         };
+        let scope = scope.map(path_str).transpose()?;
+        // A file is below a folder when its path starts with the folder and a separator
+        let below = scope.map(|folder| {
+            format!(
+                "{}{MAIN_SEPARATOR}",
+                folder.trim_end_matches(MAIN_SEPARATOR)
+            )
+        });
 
         let mut hits = Vec::new();
         let mut select = self.conn.prepare(&format!(
             "SELECT {LINE_COLUMNS}, files.path, units.page, lines.text
-             FROM lines JOIN units ON units.id = lines.unit_id JOIN files ON files.id = units.file_id",
+             FROM lines JOIN units ON units.id = lines.unit_id JOIN files ON files.id = units.file_id
+             WHERE ?1 IS NULL OR files.path = ?1 OR substr(files.path, 1, length(?2)) = ?2",
         ))?;
-        let mut rows = select.query([])?;
+        let mut rows = select.query(params![scope, below])?;
         while let Some(row) = rows.next()? {
             let line = line_of(row)?;
             for found in query.find(&line) {
@@ -355,7 +366,7 @@ mod tests {
         misread.chars[1].candidates = candidates(&[('没', 0.6), ('沒', 0.3)]);
         let index = index_with(vec![misread, typed("我沒有", BOUNDS)]);
 
-        let hits = index.search("沒有").unwrap();
+        let hits = index.search("沒有", None).unwrap();
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].text, "我沒有");
         assert_eq!(hits[1].text, "我没有");
@@ -365,7 +376,7 @@ mod tests {
         assert_eq!((hits[1].bounds.y, hits[1].bounds.h), (5.0, 12.0));
         assert_eq!(hits[1].page, 3);
 
-        assert!(index.search("有我").unwrap().is_empty());
+        assert!(index.search("有我", None).unwrap().is_empty());
     }
 
     #[test]
@@ -383,10 +394,39 @@ mod tests {
     }
 
     #[test]
+    fn searches_only_within_the_scope() {
+        let mut index = index_with(vec![typed("note", BOUNDS)]);
+        let (below, beside) = ("/notes/sub/b.rnote", "/notes-old/c.rnote");
+        for path in [below, beside] {
+            index
+                .insert_unit(Path::new(path), unit(1, 0), &[typed("note", BOUNDS)])
+                .unwrap();
+        }
+        let found = |scope: Option<&str>| {
+            let hits = index.search("note", scope.map(Path::new)).unwrap();
+            let mut paths = hits
+                .into_iter()
+                .map(|hit| hit.path.to_string_lossy().to_string())
+                .collect::<Vec<String>>();
+            paths.sort();
+            paths
+        };
+
+        assert_eq!(found(None), [beside, PATH, below]);
+        // A folder: the files below it at any depth, but not what is in a folder whose name only starts the same
+        assert_eq!(found(Some("/notes")), [PATH, below]);
+        assert_eq!(found(Some("/notes/")), [PATH, below]);
+        assert_eq!(found(Some("/notes/sub")), [below]);
+        // A file
+        assert_eq!(found(Some(PATH)), [PATH]);
+        assert!(found(Some("/elsewhere")).is_empty());
+    }
+
+    #[test]
     fn ignores_whitespace_and_case() {
         let index = index_with(vec![typed("Hello World", BOUNDS)]);
-        assert_eq!(index.search("LOW or").unwrap().len(), 1);
-        assert!(index.search("  ").unwrap().is_empty());
+        assert_eq!(index.search("LOW or", None).unwrap().len(), 1);
+        assert!(index.search("  ", None).unwrap().is_empty());
     }
 
     #[test]
@@ -404,36 +444,36 @@ mod tests {
     #[test]
     fn ignores_tone_marks() {
         let index = index_with(vec![typed("ㄇㄚˇ ㄇㄚ˙", BOUNDS)]);
-        assert_eq!(index.search("ㄇㄚㄇㄚ").unwrap().len(), 1);
-        assert_eq!(index.search("ㄇㄚˋㄇㄚ").unwrap().len(), 1);
-        assert!(index.search("ˇ").unwrap().is_empty());
+        assert_eq!(index.search("ㄇㄚㄇㄚ", None).unwrap().len(), 1);
+        assert_eq!(index.search("ㄇㄚˋㄇㄚ", None).unwrap().len(), 1);
+        assert!(index.search("ˇ", None).unwrap().is_empty());
     }
 
     #[test]
     fn a_query_without_zhuyin_matches_across_ruby_zhuyin() {
         let index = index_with(vec![typed("老ㄌ師ㄕ好", BOUNDS)]);
-        let hits = index.search("老師").unwrap();
+        let hits = index.search("老師", None).unwrap();
         assert_eq!(hits.len(), 1);
         // From the start of 老 to the end of 師
         assert_eq!((hits[0].bounds.x, hits[0].bounds.w), (0.0, 18.0));
         // Found once, though it matches with and without the zhuyin left out
-        assert_eq!(index.search("師").unwrap().len(), 1);
+        assert_eq!(index.search("師", None).unwrap().len(), 1);
         // A query with zhuyin is matched as it is
-        assert_eq!(index.search("ㄌ師").unwrap().len(), 1);
-        assert!(index.search("ㄌㄕ").unwrap().is_empty());
+        assert_eq!(index.search("ㄌ師", None).unwrap().len(), 1);
+        assert!(index.search("ㄌㄕ", None).unwrap().is_empty());
     }
 
     #[test]
     fn an_index_of_another_version_is_emptied() {
         let index = index_with(vec![typed("kept", BOUNDS)]);
         let same = Index::with_connection(index.conn).unwrap();
-        assert_eq!(same.search("kept").unwrap().len(), 1);
+        assert_eq!(same.search("kept", None).unwrap().len(), 1);
 
         same.conn
             .pragma_update(None, "user_version", Index::VERSION + 1)
             .unwrap();
         let other = Index::with_connection(same.conn).unwrap();
-        assert!(other.search("kept").unwrap().is_empty());
+        assert!(other.search("kept", None).unwrap().is_empty());
     }
 
     #[test]
@@ -445,7 +485,7 @@ mod tests {
             .unwrap();
         assert!(!index.is_current(path, STAMP).unwrap());
         // What is indexed so far can be found already, and does not need to be recognised again
-        assert_eq!(index.search("partial").unwrap().len(), 1);
+        assert_eq!(index.search("partial", None).unwrap().len(), 1);
         assert!(index.unit_hashes(path).unwrap().contains(&1));
 
         index.finish_file(path, STAMP, &[unit(1, 0)]).unwrap();
@@ -467,11 +507,11 @@ mod tests {
         index.finish_file(path, changed, &[unit(0, 4)]).unwrap();
         assert!(index.is_current(path, changed).unwrap());
         assert_eq!(index.unit_hashes(path).unwrap(), HashSet::from([0]));
-        assert_eq!(index.search("kept").unwrap()[0].page, 4);
-        assert!(index.search("gone").unwrap().is_empty());
+        assert_eq!(index.search("kept", None).unwrap()[0].page, 4);
+        assert!(index.search("gone", None).unwrap().is_empty());
 
         // The file does not exist on disk
         assert_eq!(index.remove_missing().unwrap(), 1);
-        assert!(index.search("kept").unwrap().is_empty());
+        assert!(index.search("kept", None).unwrap().is_empty());
     }
 }

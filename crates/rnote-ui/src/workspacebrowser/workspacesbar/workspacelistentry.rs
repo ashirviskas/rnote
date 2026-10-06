@@ -1,5 +1,6 @@
 // Imports
 use self::imp::RnWorkspaceListEntryInner;
+use gettextrs::gettext;
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use gtk4::{gdk, glib};
@@ -7,7 +8,7 @@ use once_cell::sync::Lazy;
 use rnote_compose::color;
 use rnote_engine::ext::GdkRGBAExt;
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod imp {
     use super::*;
@@ -144,6 +145,16 @@ impl RnWorkspaceListEntry {
             )
             .property("name", inner.name.to_value())
             .build()
+    }
+
+    /// The entry of the library, the folder that holds all notes.
+    pub(crate) fn library(dir: &Path) -> Self {
+        Self::new(RnWorkspaceListEntryInner {
+            dir: dir.to_path_buf(),
+            icon: String::from("workspacelistentryicon-library-symbolic"),
+            color: Self::COLOR_DEFAULT.as_rgba_u32(),
+            name: gettext("Notes"),
+        })
     }
 
     pub(crate) fn replace_data(&self, entry: &Self) {
