@@ -340,7 +340,8 @@ mod tests {
             Vector2::new(100.0, 200.0),
             Format::default(),
         );
-        let vector = VectorImage::from_pdf_bytes(pdf, prefs, pos, None, &format, None).unwrap();
+        let vector =
+            VectorImage::from_pdf_bytes(pdf, prefs, pos, None, &format, None, None).unwrap();
         let bitmap = BitmapImage::from_pdf_bytes(pdf, prefs, pos, None, &format, None).unwrap();
         let strokes = [
             Stroke::VectorImage(vector[0].clone()),

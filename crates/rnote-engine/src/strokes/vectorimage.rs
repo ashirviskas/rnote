@@ -6,6 +6,7 @@ use super::{Content, Stroke};
 use crate::Image;
 use crate::document::Format;
 use crate::engine::import::{PdfImportPageSpacing, PdfImportPrefs};
+use crate::notefolder::FileName;
 use crate::svg::USVG_FONTDB;
 use crate::{Drawable, Svg};
 use anyhow::anyhow;
@@ -23,6 +24,38 @@ use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use std::sync::Arc;
 
+/// A page of a Pdf that is kept as a file of a note folder.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename = "pdf_page_ref")]
+pub struct PdfPageRef {
+    #[serde(rename = "file")]
+    pub file: FileName,
+    /// The index of the page in the Pdf.
+    #[serde(rename = "page")]
+    pub page: u32,
+}
+
+/// The [VectorImage] of a Pdf page as it is written into a note folder that holds the Pdf: without its `svg_data`,
+/// which every device makes from the Pdf. Read back, it is a [VectorImage] whose `svg_data` is empty.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename = "vectorimage")]
+pub(crate) struct PdfPageImage<'a> {
+    #[serde(
+        rename = "intrinsic_size",
+        with = "rnote_compose::serialize::glam_vector2_dp3"
+    )]
+    intrinsic_size: Vector2,
+    #[serde(rename = "rectangle")]
+    rectangle: &'a Rectangle,
+    #[serde(
+        rename = "text_lines",
+        skip_serializing_if = "<[ImageTextLine]>::is_empty"
+    )]
+    text_lines: &'a [ImageTextLine],
+    #[serde(rename = "pdf_page")]
+    pub(crate) pdf_page: &'a PdfPageRef,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename = "vectorimage")]
 pub struct VectorImage {
@@ -38,6 +71,10 @@ pub struct VectorImage {
     /// The text the image carries, when it was imported from a Pdf page with a text layer.
     #[serde(rename = "text_lines", skip_serializing_if = "Vec::is_empty")]
     pub text_lines: Vec<ImageTextLine>,
+    /// The page of a Pdf the image was made from, when the document keeps the Pdf. `svg_data` can be made from
+    /// it again, see [Self::pdf_page_svg_data].
+    #[serde(rename = "pdf_page", skip_serializing_if = "Option::is_none")]
+    pub pdf_page: Option<PdfPageRef>,
 }
 
 impl Default for VectorImage {
@@ -47,8 +84,15 @@ impl Default for VectorImage {
             intrinsic_size: Vector2::ZERO,
             rectangle: Rectangle::default(),
             text_lines: Vec::new(),
+            pdf_page: None,
         }
     }
+}
+
+/// An Svg after it went through `usvg`.
+struct NormalizedSvg {
+    svg_data: String,
+    intrinsic_size: Vector2,
 }
 
 impl Content for VectorImage {
@@ -143,11 +187,28 @@ impl Transformable for VectorImage {
 }
 
 impl VectorImage {
-    pub fn from_svg_str(
-        svg_data: &str,
-        pos: Vector2,
-        size_option: ImageSizeOption,
-    ) -> Result<Self, anyhow::Error> {
+    /// The image as it is written into a note folder that holds the Pdf of its page.
+    pub(crate) fn as_pdf_page_image(&self) -> Option<PdfPageImage<'_>> {
+        Some(PdfPageImage {
+            intrinsic_size: self.intrinsic_size,
+            rectangle: &self.rectangle,
+            text_lines: &self.text_lines,
+            pdf_page: self.pdf_page.as_ref()?,
+        })
+    }
+
+    /// The `svg_data` of the image of a page of a Pdf, as [Self::from_pdf_bytes] makes it.
+    pub(crate) fn pdf_page_svg_data(page: &hayro_syntax::page::Page) -> anyhow::Result<String> {
+        let interpreter_settings = hayro_interpret::InterpreterSettings::default();
+        let render_settings = hayro_svg::SvgRenderSettings {
+            bg_color: [255, 255, 255, 255],
+        };
+        let svg_data = hayro_svg::convert(page, &interpreter_settings, &render_settings);
+        Ok(Self::normalized_svg(&svg_data)?.svg_data)
+    }
+
+    /// The Svg as images hold it, and its size.
+    fn normalized_svg(svg_data: &str) -> anyhow::Result<NormalizedSvg> {
         const COORDINATES_PREC: u8 = 3;
         const TRANSFORMS_PREC: u8 = 8;
 
@@ -168,11 +229,24 @@ impl VectorImage {
             },
         )?;
 
-        let intrinsic_size = Vector2::new(
-            svg_tree.size().width() as f64,
-            svg_tree.size().height() as f64,
-        );
-        let svg_data = svg_tree.to_string(&xml_options);
+        Ok(NormalizedSvg {
+            intrinsic_size: Vector2::new(
+                svg_tree.size().width() as f64,
+                svg_tree.size().height() as f64,
+            ),
+            svg_data: svg_tree.to_string(&xml_options),
+        })
+    }
+
+    pub fn from_svg_str(
+        svg_data: &str,
+        pos: Vector2,
+        size_option: ImageSizeOption,
+    ) -> Result<Self, anyhow::Error> {
+        let NormalizedSvg {
+            svg_data,
+            intrinsic_size,
+        } = Self::normalized_svg(svg_data)?;
 
         let mut affine = DAffine2::IDENTITY;
         let rectangle = match size_option {
@@ -208,9 +282,13 @@ impl VectorImage {
             intrinsic_size,
             rectangle,
             text_lines: Vec::new(),
+            pdf_page: None,
         })
     }
 
+    /// The images of the pages of a Pdf.
+    ///
+    /// `pdf_file` is the name the Pdf is kept under, when the document keeps it. The images then know their page.
     pub fn from_pdf_bytes(
         to_be_read: &[u8],
         pdf_import_prefs: PdfImportPrefs,
@@ -218,6 +296,7 @@ impl VectorImage {
         page_range: Option<Range<usize>>,
         format: &Format,
         password: Option<String>,
+        pdf_file: Option<FileName>,
     ) -> Result<Vec<Self>, anyhow::Error> {
         // TODO: how to avoid this allocation without lifetime issues?
         let data = Arc::new(to_be_read.to_vec());
@@ -274,15 +353,20 @@ impl VectorImage {
                 let svg_data = hayro_svg::convert(page, &interpreter_settings, &render_settings);
                 let svg = Svg { svg_data, bounds };
                 let text_lines = imagetext::pdf_page_text(page, &interpreter_settings);
+                let pdf_page = pdf_file.clone().map(|file| PdfPageRef {
+                    file,
+                    page: page_i as u32,
+                });
 
-                Some((svg, text_lines))
+                Some((svg, text_lines, pdf_page))
             })
-            .collect::<Vec<(Svg, Vec<ImageTextLine>)>>();
+            .collect::<Vec<(Svg, Vec<ImageTextLine>, Option<PdfPageRef>)>>();
 
         svgs.into_par_iter()
-            .map(|(svg, text_lines)| {
+            .map(|(svg, text_lines, pdf_page)| {
                 Ok(Self {
                     text_lines,
+                    pdf_page,
                     ..Self::from_svg_str(
                         svg.svg_data.as_str(),
                         svg.bounds.mins,

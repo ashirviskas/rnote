@@ -4,9 +4,8 @@
 use anyhow::{Context, anyhow};
 use async_fs::File;
 use core::time::Duration;
-use futures::{AsyncReadExt, AsyncWriteExt, FutureExt, select};
+use futures::{AsyncWriteExt, FutureExt, select};
 use rnote_engine::Engine;
-use rnote_engine::engine::EngineSnapshot;
 use rnote_engine::engine::export::SelectionExportFormat;
 use smol::Timer;
 use std::path::PathBuf;
@@ -18,11 +17,7 @@ pub(crate) async fn run_thumbnail(
     timeout: Option<Duration>,
 ) -> anyhow::Result<()> {
     let mut engine = Engine::default();
-    let mut rnote_file_bytes = vec![];
-
-    let mut fh = File::open(rnote_file).await?;
-    fh.read_to_end(&mut rnote_file_bytes).await?;
-    let engine_snapshot = EngineSnapshot::load_from_rnote_bytes(rnote_file_bytes).await?;
+    let engine_snapshot = crate::cli::load_note(&rnote_file).await?;
 
     // We dont care about the return values of these functions
     let _ = engine.load_snapshot(engine_snapshot);

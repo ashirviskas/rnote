@@ -17,6 +17,7 @@ use rnote_compose::Color;
 use rnote_engine::document::DocumentConfig;
 use rnote_engine::engine::{EngineConfig, EngineConfigShared};
 use rnote_engine::ext::GdkRGBAExt;
+use rnote_engine::notefolder::NoteFolder;
 use rnote_engine::pens::PenMode;
 use rnote_engine::pens::PenStyle;
 use rnote_engine::pens::pensconfig::brushconfig::BrushStyle;
@@ -651,15 +652,18 @@ impl RnAppWindow {
         rnote_file_new_tab: bool,
     ) -> anyhow::Result<bool> {
         let file_imported = match FileType::lookup_file_type(&input_file) {
-            FileType::RnoteFile => {
+            FileType::RnoteFile | FileType::NoteFolder => {
                 let input_file_path = input_file.path().ok_or_else(|| {
                     anyhow::anyhow!("Could not open file '{input_file:?}', file path is None.")
                 })?;
+                // A note folder is opened by its folder or by its entry file, and is known by its folder
+                let note_folder = NoteFolder::folder_of(&input_file_path);
+                let note_path = note_folder.clone().unwrap_or(input_file_path);
 
                 // we grab focus
                 self.present();
                 // If the file is already opened in a tab, simply switch to it
-                if let Some(page) = self.tabs_query_file_opened(input_file_path) {
+                if let Some(page) = self.tabs_query_file_opened(&note_path) {
                     self.overlays().tabview().set_selected_page(&page);
                     false
                 } else {
@@ -679,11 +683,16 @@ impl RnAppWindow {
                             (false, Some(active_wrapper)) => (false, active_wrapper),
                         };
 
-                    let (bytes, _) = input_file.load_bytes_future().await?;
-                    let widget_flags = wrapper
-                        .canvas()
-                        .load_in_rnote_bytes(bytes.to_vec(), input_file.path())
-                        .await?;
+                    let widget_flags = match note_folder {
+                        Some(dir) => wrapper.canvas().load_in_note_folder(dir).await?,
+                        None => {
+                            let (bytes, _) = input_file.load_bytes_future().await?;
+                            wrapper
+                                .canvas()
+                                .load_in_rnote_bytes(bytes.to_vec(), Some(note_path))
+                                .await?
+                        }
+                    };
                     if rnote_file_new_tab {
                         self.append_wrapper_new_tab(&wrapper);
                     }

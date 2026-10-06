@@ -4,6 +4,7 @@
 
 // Modules
 pub(crate) mod cli;
+pub(crate) mod convert;
 pub(crate) mod create;
 pub(crate) mod export;
 pub(crate) mod import;

@@ -20,6 +20,7 @@ pub use strokecontent::StrokeContent;
 // Imports
 use crate::Image;
 use crate::document::Layout;
+use crate::notefolder::Files;
 use crate::pens::PenMode;
 use crate::pens::{Pen, PenStyle};
 use crate::store::StrokeKey;
@@ -192,6 +193,10 @@ pub struct Engine {
     #[serde(rename = "penholder")]
     pub penholder: PenHolder,
 
+    /// The files that were imported into the document and that it keeps as they are, such as Pdfs. A note folder
+    /// saves them next to the strokes.
+    #[serde(skip)]
+    pub files: Files,
     #[cfg(feature = "ui")]
     #[serde(skip)]
     audioplayer: Option<crate::AudioPlayer>,
@@ -231,6 +236,7 @@ impl Default for Engine {
             camera: Camera::default(),
             penholder: PenHolder::default(),
 
+            files: Files::default(),
             #[cfg(feature = "ui")]
             audioplayer: None,
             animation: Animation::default(),
@@ -352,6 +358,7 @@ impl Engine {
             stroke_components: Arc::clone(&store_history_entry.stroke_components),
             chrono_components: Arc::clone(&store_history_entry.chrono_components),
             chrono_counter: store_history_entry.chrono_counter,
+            files: self.files.clone(),
         }
     }
 
@@ -359,6 +366,7 @@ impl Engine {
     pub fn load_snapshot(&mut self, snapshot: EngineSnapshot) -> WidgetFlags {
         self.document = snapshot.document.extract_snapshot_data();
         self.camera = snapshot.camera.extract_snapshot_data();
+        self.files = snapshot.files.clone();
         let mut widget_flags = self.store.import_from_snapshot(&snapshot)
             | self.doc_resize_autoexpand()
             | self.current_pen_update_state()

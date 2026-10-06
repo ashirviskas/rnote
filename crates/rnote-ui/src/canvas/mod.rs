@@ -24,9 +24,10 @@ use once_cell::sync::Lazy;
 use p2d::bounding_volume::Aabb;
 use p2d::math::Vector2;
 use rnote_compose::ext::AabbExt;
-use rnote_compose::penevent::PenState;
+use rnote_compose::penevent::{PenProgress, PenState};
 use rnote_engine::ext::GraphenePointExt;
 use rnote_engine::ext::GrapheneRectExt;
+use rnote_engine::notefolder::NoteFolder;
 use rnote_engine::{Engine, WidgetFlags};
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::path::Path;
@@ -81,6 +82,11 @@ mod imp {
         pub(crate) animation_callback_id: RefCell<Option<gtk4::TickCallbackId>>,
 
         pub(crate) output_file: RefCell<Option<gio::File>>,
+        /// What is known of the note folder the document was loaded from or saved to, when the output file is
+        /// one.
+        pub(crate) note_folder: RefCell<Option<NoteFolder>>,
+        /// Whether what other devices wrote into the note folder is being brought in.
+        pub(crate) note_folder_merging: Cell<bool>,
         pub(crate) output_file_watcher_task: RefCell<Option<glib::JoinHandle<()>>>,
         pub(crate) output_file_modified_toast_singleton: glib::WeakRef<adw::Toast>,
         pub(crate) locked_tool_toast_singleton: glib::WeakRef<adw::Toast>,
@@ -177,6 +183,8 @@ mod imp {
                 animation_callback_id: RefCell::new(None),
 
                 output_file: RefCell::new(None),
+                note_folder: RefCell::new(None),
+                note_folder_merging: Cell::new(false),
                 output_file_watcher_task: RefCell::new(None),
                 // is automatically updated whenever the output file changes.
                 output_file_modified_toast_singleton: glib::WeakRef::new(),
@@ -1042,7 +1050,119 @@ impl RnCanvas {
         }
     }
 
+    /// Watches the batches of the open note folder. When another device wrote some, they are brought in.
+    fn create_note_folder_watcher(&self, dir: &Path, appwindow: &RnAppWindow) {
+        let ink_dir = dir.join("ink");
+        let new_watcher_task = glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to=canvas)]
+            self,
+            #[weak]
+            appwindow,
+            async move {
+                let (tx, mut rx) = futures::channel::mpsc::unbounded();
+                let debouncer = notify_debouncer_full::new_debouncer(
+                    Duration::from_millis(1000),
+                    None,
+                    move |res| {
+                        if let Err(e) = tx.unbounded_send(res) {
+                            error!(
+                                "Note folder watcher reported change, but failed to send it through channel. Err: {e:?}"
+                            );
+                        }
+                    },
+                );
+                let mut debouncer = match debouncer {
+                    Ok(debouncer) => debouncer,
+                    Err(e) => {
+                        error!("Failed to create note folder watcher, Err: {e:?}");
+                        return;
+                    }
+                };
+                if let Err(e) = debouncer.watch(&ink_dir, notify::RecursiveMode::NonRecursive) {
+                    error!("Failed to start watching directory {ink_dir:?}, Err: {e:?}");
+                    return;
+                }
+                while let Some(res) = rx.next().await {
+                    if let Err(e) = res {
+                        error!("Note folder watcher sent error message, Err: {e:?}");
+                        continue;
+                    }
+                    // In a task of its own: loading the note again replaces this watcher
+                    glib::spawn_future_local(glib::clone!(
+                        #[weak]
+                        canvas,
+                        #[weak]
+                        appwindow,
+                        async move {
+                            canvas.merge_note_folder_news(&appwindow).await;
+                        }
+                    ));
+                }
+            }
+        ));
+
+        if let Some(old_watcher_task) = self
+            .imp()
+            .output_file_watcher_task
+            .borrow_mut()
+            .replace(new_watcher_task)
+        {
+            old_watcher_task.abort();
+        }
+    }
+
+    /// Brings in what other devices wrote into the open note folder since it was loaded.
+    ///
+    /// The document is saved, then loaded again. Saving only adds a batch, so it takes nothing away from what
+    /// the other devices wrote, and loading puts all batches together.
+    async fn merge_note_folder_news(&self, appwindow: &RnAppWindow) {
+        let has_news = |canvas: &Self| {
+            let note_folder = canvas.imp().note_folder.borrow();
+            note_folder
+                .as_ref()
+                .is_some_and(|note| note.has_unread_batches().unwrap_or(false))
+        };
+        if self.imp().note_folder_merging.get() || !has_news(self) {
+            return;
+        }
+        self.imp().note_folder_merging.set(true);
+
+        // A stroke that is being drawn would be lost, and a save that is running has to end first
+        while self.engine_ref().penholder.current_pen_progress() != PenProgress::Idle
+            || self.save_in_progress()
+        {
+            glib::timeout_future(Duration::from_millis(300)).await;
+        }
+        let merge = async {
+            let output_file = self
+                .output_file()
+                .ok_or_else(|| anyhow::anyhow!("The document has no output file any more."))?;
+            self.save_document_to_file(&output_file).await?;
+            self.reload_from_disk().await
+        };
+        match merge.await {
+            Ok(()) => {
+                appwindow.overlays().dispatch_toast_text(
+                    &gettext("Changes from another device were added"),
+                    crate::overlays::TEXT_TOAST_TIMEOUT_DEFAULT,
+                );
+            }
+            Err(e) => {
+                error!("Bringing in the changes of another device failed, Err: {e:?}");
+                appwindow.overlays().dispatch_toast_error(&gettext(
+                    "Adding the changes from another device failed",
+                ));
+            }
+        }
+        self.imp().note_folder_merging.set(false);
+    }
+
     pub(crate) fn create_output_file_watcher(&self, file: &gio::File, appwindow: &RnAppWindow) {
+        if let Some(dir) = file.path().and_then(|path| NoteFolder::folder_of(&path)) {
+            self.create_note_folder_watcher(&dir, appwindow);
+            return;
+        }
+
         let dispatch_toast_reload_modified_file = |appwindow: &RnAppWindow, canvas: &RnCanvas| {
             canvas.set_unsaved_changes(true);
 

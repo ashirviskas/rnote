@@ -11,6 +11,7 @@ use gtk4::{gio, glib, prelude::*};
 use notify::EventKind;
 use notify::event::{AccessKind, AccessMode};
 use notify_debouncer_full::notify;
+use rnote_engine::notefolder::NoteFolder;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -76,6 +77,18 @@ pub(crate) fn watch() {
     WATCH.set(Some(Watch { dir, task }));
 }
 
+/// Whether the path is a rnote file, or a note folder or a file in one.
+fn is_in_note(path: &Path) -> bool {
+    let is_note_folder = |name: &Path| {
+        name.extension()
+            .is_some_and(|ext| ext == NoteFolder::EXTENSION)
+    };
+    path.extension().is_some_and(|ext| ext == "rnote")
+        || path
+            .components()
+            .any(|component| is_note_folder(Path::new(component.as_os_str())))
+}
+
 /// Queues the library for indexing whenever notes in it changed.
 async fn watch_changes(dir: PathBuf) {
     let (sender, mut receiver) = mpsc::unbounded();
@@ -105,8 +118,7 @@ async fn watch_changes(dir: PathBuf) {
                         EventKind::Access(kind) => kind == AccessKind::Close(AccessMode::Write),
                         _ => true,
                     };
-                    let is_note = |path: &PathBuf| path.extension().is_some_and(|e| e == "rnote");
-                    changes && event.paths.iter().any(is_note)
+                    changes && event.paths.iter().any(|path| is_in_note(path))
                 });
                 if notes_changed {
                     // Files that did not change are skipped when the library is indexed

@@ -15,6 +15,7 @@ use rnote_compose::ext::Vector2Ext;
 use rnote_compose::shapes::Shapeable;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::error;
 
@@ -246,6 +247,8 @@ impl Engine {
             insert_pos
         };
 
+        let files = self.files.clone();
+
         rayon::spawn(move || {
             let result = || -> anyhow::Result<Vec<(Stroke, Option<StrokeLayer>)>> {
                 match pdf_import_prefs.pages_type {
@@ -264,6 +267,12 @@ impl Engine {
                         Ok(bitmapimages)
                     }
                     PdfImportPagesType::Vector => {
+                        // The Pdf is kept, so that a note folder can save it as it is. Not one that needs a
+                        // password: its pages could not be made again without asking for it.
+                        let bytes = Arc::new(bytes);
+                        let pdf_file = password
+                            .is_none()
+                            .then(|| files.insert(Arc::clone(&bytes), "pdf"));
                         let vectorimages = VectorImage::from_pdf_bytes(
                             &bytes,
                             pdf_import_prefs,
@@ -271,6 +280,7 @@ impl Engine {
                             page_range,
                             &format,
                             password,
+                            pdf_file,
                         )?
                         .into_iter()
                         .map(|s| (Stroke::VectorImage(s), Some(StrokeLayer::Document)))

@@ -1,6 +1,7 @@
 # Specify sources
 rnote_cli_sources = files(
     'cli.rs',
+    'convert.rs',
     'export.rs',
     'import.rs',
     'index.rs',
