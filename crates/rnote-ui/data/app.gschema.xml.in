@@ -125,6 +125,19 @@
       <default>120</default>
       <summary>the sec interval for the autosave</summary>
     </key>
+    <key name="library-dir" type="s">
+      <default>''</default>
+      <summary>The folder that holds all notes, empty when there is none</summary>
+    </key>
+    <key name="search-scope" type="s">
+      <choices>
+        <choice value="document" />
+        <choice value="folder" />
+        <choice value="all" />
+      </choices>
+      <default>"all"</default>
+      <summary>Where the search in the notes looks</summary>
+    </key>
     <key name="search-zhuyin" type="b">
       <default>false</default>
       <summary>Whether zhuyin is read when notes are indexed for search (experimental)</summary>

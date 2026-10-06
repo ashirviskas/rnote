@@ -66,6 +66,7 @@ rnote_ui_sources = files(
     'groupediconpicker/mod.rs',
     'iconpicker.rs',
     'indexer.rs',
+    'library.rs',
     'main.rs',
     'mainheader.rs',
     'overlays.rs',

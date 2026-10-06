@@ -34,6 +34,32 @@ impl RnAppWindow {
             .get_no_changes()
             .build();
 
+        app_settings
+            .bind(
+                "search-scope",
+                &self.sidebar().workspacebrowser().search_scope_togglegroup(),
+                "active-name",
+            )
+            .build();
+
+        // The library is read from its setting where it is needed, see `library`
+        app_settings.connect_changed(
+            Some("library-dir"),
+            clone!(
+                #[weak(rename_to=appwindow)]
+                self,
+                move |_, _| {
+                    appwindow
+                        .sidebar()
+                        .workspacebrowser()
+                        .workspacesbar()
+                        .set_library(crate::library::dir());
+                    appwindow.sidebar().settings_panel().refresh_library_row();
+                    crate::library::watch();
+                }
+            ),
+        );
+
         // The indexer reads this setting when it starts the cli, see `indexer`
         app_settings
             .bind(
@@ -444,6 +470,12 @@ impl RnAppWindow {
                 .workspacebrowser()
                 .workspacesbar()
                 .load_from_settings(&app_settings);
+        }
+
+        {
+            // Library
+            self.sidebar().settings_panel().refresh_library_row();
+            crate::library::watch();
         }
 
         {

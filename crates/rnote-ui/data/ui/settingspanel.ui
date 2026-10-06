@@ -54,6 +54,32 @@
                       </object>
                     </child>
                     <child>
+                      <object class="AdwActionRow" id="general_library_dir_row">
+                        <property name="title" translatable="yes">Notes Library</property>
+                        <property name="use-markup">false</property>
+                        <child type="suffix">
+                          <object class="GtkButton" id="general_library_dir_clear_button">
+                            <property name="icon-name">window-close-symbolic</property>
+                            <property name="tooltip-text" translatable="yes">Use No Notes Library</property>
+                            <property name="valign">center</property>
+                            <style>
+                              <class name="flat" />
+                            </style>
+                          </object>
+                        </child>
+                        <child type="suffix">
+                          <object class="GtkButton" id="general_library_dir_button">
+                            <property name="icon-name">folder-open-symbolic</property>
+                            <property name="tooltip-text" translatable="yes">Choose the Notes Library</property>
+                            <property name="valign">center</property>
+                            <style>
+                              <class name="flat" />
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
                       <object class="AdwSwitchRow" id="general_search_zhuyin_row">
                         <property name="title" translatable="yes">Read Zhuyin (experimental)</property>
                         <property name="subtitle" translatable="yes">Read zhuyin symbols when indexing notes for search. Can replace characters that look like them</property>

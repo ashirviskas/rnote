@@ -13,8 +13,9 @@ use crate::{RnAppWindow, RnIconPicker, RnUnitEntry};
 use adw::prelude::*;
 use gettextrs::{gettext, pgettext};
 use gtk4::{
-    Adjustment, Button, ColorDialogButton, CompositeTemplate, MenuButton, ScrolledWindow,
-    StringList, ToggleButton, Widget, gdk, glib, glib::clone, subclass::prelude::*,
+    Adjustment, Button, ColorDialogButton, CompositeTemplate, FileDialog, MenuButton,
+    ScrolledWindow, StringList, ToggleButton, Widget, gdk, gio, glib, glib::clone,
+    subclass::prelude::*,
 };
 use num_traits::ToPrimitive;
 use rnote_compose::penevent::ShortcutKey;
@@ -25,6 +26,7 @@ use rnote_engine::document::format::{self, Format, PredefinedFormat};
 use rnote_engine::ext::GdkRGBAExt;
 use rnote_engine::pens::PenMode;
 use std::cell::RefCell;
+use tracing::debug;
 
 mod imp {
     use super::*;
@@ -41,6 +43,12 @@ mod imp {
         pub(crate) general_autosave_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
         pub(crate) general_autosave_interval_secs_row: TemplateChild<adw::SpinRow>,
+        #[template_child]
+        pub(crate) general_library_dir_row: TemplateChild<adw::ActionRow>,
+        #[template_child]
+        pub(crate) general_library_dir_clear_button: TemplateChild<Button>,
+        #[template_child]
+        pub(crate) general_library_dir_button: TemplateChild<Button>,
         #[template_child]
         pub(crate) general_search_zhuyin_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
@@ -399,6 +407,21 @@ impl RnSettingsPanel {
         self.imp().general_drawing_cursor_picker.clone()
     }
 
+    /// Shows the library that is set.
+    pub(crate) fn refresh_library_row(&self) {
+        let imp = self.imp();
+        let dir = crate::library::dir();
+
+        imp.general_library_dir_clear_button
+            .set_visible(dir.is_some());
+        imp.general_library_dir_row.set_subtitle(&match dir {
+            Some(dir) => dir.to_string_lossy().to_string(),
+            None => gettext(
+                "The folder that holds all notes. Search finds every note in it, opened or not",
+            ),
+        });
+    }
+
     pub(crate) fn general_search_zhuyin_row(&self) -> adw::SwitchRow {
         self.imp().general_search_zhuyin_row.clone()
     }
@@ -574,6 +597,37 @@ impl RnSettingsPanel {
 
     fn setup_general(&self, appwindow: &RnAppWindow) {
         let imp = self.imp();
+
+        // notes library
+        imp.general_library_dir_button.connect_clicked(clone!(
+            #[weak]
+            appwindow,
+            move |_| {
+                glib::spawn_future_local(clone!(
+                    #[weak]
+                    appwindow,
+                    async move {
+                        let filedialog = FileDialog::builder()
+                            .title(gettext("Choose the Notes Library"))
+                            .modal(true)
+                            .accept_label(gettext("Select"))
+                            .build();
+                        if let Some(dir) = crate::library::dir() {
+                            filedialog.set_initial_folder(Some(&gio::File::for_path(dir)));
+                        }
+
+                        match filedialog.select_folder_future(Some(&appwindow)).await {
+                            Ok(selected) => crate::library::set_dir(selected.path().as_deref()),
+                            Err(e) => debug!(
+                                "Did not select a folder as the library (Error or dialog dismissed by user), Err: {e:?}"
+                            ),
+                        }
+                    }
+                ));
+            }
+        ));
+        imp.general_library_dir_clear_button
+            .connect_clicked(|_| crate::library::set_dir(None));
 
         // autosave enable row
         imp.general_autosave_row

@@ -110,6 +110,9 @@ pub(crate) enum Command {
         /// The text to search for. Whitespace and letter case are ignored.
         #[arg(required = true)]
         query: Vec<String>,
+        /// Only search the rnote files below this folder, or this one rnote file.
+        #[arg(long = "in")]
+        folder: Option<PathBuf>,
     },
 }
 
@@ -312,8 +315,8 @@ pub(crate) async fn run() -> anyhow::Result<()> {
         Command::Index { paths, zhuyin } => {
             index::run_index(&paths, zhuyin).await?;
         }
-        Command::Search { query } => {
-            search::run_search(&query.concat())?;
+        Command::Search { query, folder } => {
+            search::run_search(&query.concat(), folder.as_deref())?;
         }
     }
 

@@ -58,6 +58,10 @@ mod imp {
         #[template_child]
         pub(crate) search_entry: TemplateChild<SearchEntry>,
         #[template_child]
+        pub(crate) search_results_box: TemplateChild<gtk4::Box>,
+        #[template_child]
+        pub(crate) search_scope_togglegroup: TemplateChild<adw::ToggleGroup>,
+        #[template_child]
         pub(crate) search_results_listbox: TemplateChild<ListBox>,
         #[template_child]
         pub(crate) search_results_placeholder: TemplateChild<Label>,
@@ -85,6 +89,8 @@ mod imp {
                 dir_controls_actions_box: TemplateChild::<gtk4::Box>::default(),
                 workspacesbar: TemplateChild::<RnWorkspacesBar>::default(),
                 search_entry: TemplateChild::<SearchEntry>::default(),
+                search_results_box: TemplateChild::<gtk4::Box>::default(),
+                search_scope_togglegroup: TemplateChild::<adw::ToggleGroup>::default(),
                 search_results_listbox: TemplateChild::<ListBox>::default(),
                 search_results_placeholder: TemplateChild::<Label>::default(),
             }
@@ -168,6 +174,10 @@ impl RnWorkspaceBrowser {
 
     pub(crate) fn active_workspace_dir_label(&self) -> Label {
         self.imp().active_workspace_dir_label.clone()
+    }
+
+    pub(crate) fn search_scope_togglegroup(&self) -> adw::ToggleGroup {
+        self.imp().search_scope_togglegroup.clone()
     }
 
     pub(crate) fn dir_controls_actions_box(&self) -> gtk4::Box {

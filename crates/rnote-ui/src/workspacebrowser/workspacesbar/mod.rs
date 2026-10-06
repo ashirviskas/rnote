@@ -16,7 +16,8 @@ use gtk4::{
     Button, CompositeTemplate, ListBox, ScrolledWindow, Widget, gdk, gio, glib, glib::clone,
     prelude::*, subclass::prelude::*,
 };
-use std::path::PathBuf;
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 use tracing::{error, warn};
 
 mod imp {
@@ -27,6 +28,8 @@ mod imp {
     pub(crate) struct RnWorkspacesBar {
         pub(crate) action_group: gio::SimpleActionGroup,
         pub(crate) workspace_list: RnWorkspaceList,
+        /// The folder of the library, while its entry is the first of the list.
+        pub(crate) library_dir: RefCell<Option<PathBuf>>,
 
         #[template_child]
         pub(crate) workspaces_scroller: TemplateChild<ScrolledWindow>,
@@ -49,6 +52,7 @@ mod imp {
             Self {
                 action_group: gio::SimpleActionGroup::new(),
                 workspace_list: RnWorkspaceList::default(),
+                library_dir: RefCell::default(),
 
                 workspaces_scroller: Default::default(),
                 workspaces_listbox: Default::default(),
@@ -132,11 +136,61 @@ impl RnWorkspacesBar {
         self.select_workspace_by_index(i);
     }
 
+    /// Puts the entry of the library first in the list. Without a library there is no such entry.
+    ///
+    /// The entry is not saved with the workspaces, and it can not be removed, edited or moved.
+    pub(crate) fn set_library(&self, dir: Option<PathBuf>) {
+        let imp = self.imp();
+        let selected = self.selected_workspace_index().unwrap_or(0);
+
+        let had_entry = imp.library_dir.take().is_some();
+        if had_entry {
+            imp.workspace_list.remove(0);
+        }
+        if let Some(dir) = dir.as_ref() {
+            imp.workspace_list
+                .insert(0, RnWorkspaceListEntry::library(dir));
+        }
+        let has_entry = dir.is_some();
+        imp.library_dir.replace(dir);
+
+        // The workspace that was selected stays selected
+        self.select_workspace_by_index(
+            (selected + has_entry as u32).saturating_sub(had_entry as u32),
+        );
+        self.update_buttons();
+    }
+
+    /// The index of the first entry that is a workspace of the user.
+    fn first_workspace_index(&self) -> u32 {
+        self.imp().library_dir.borrow().is_some() as u32
+    }
+
+    fn library_selected(&self) -> bool {
+        self.selected_workspace_index()
+            .is_some_and(|i| i < self.first_workspace_index())
+    }
+
+    fn update_buttons(&self) {
+        let imp = self.imp();
+        let n_items = imp.workspace_list.n_items();
+        let is_workspace = n_items > 0 && !self.library_selected();
+
+        imp.move_selected_workspace_up_button
+            .set_sensitive(is_workspace);
+        imp.move_selected_workspace_down_button
+            .set_sensitive(is_workspace);
+        imp.remove_selected_workspace_button
+            .set_sensitive(is_workspace && n_items > 1);
+        imp.edit_selected_workspace_button
+            .set_sensitive(is_workspace);
+    }
+
     pub(crate) fn remove_selected_workspace(&self) {
         let n_items = self.imp().workspace_list.n_items();
 
         // never remove the last row
-        if n_items > 0 {
+        if n_items > 0 && !self.library_selected() {
             let i = self
                 .selected_workspace_index()
                 .unwrap_or_else(|| n_items.saturating_sub(1));
@@ -150,12 +204,13 @@ impl RnWorkspacesBar {
     pub(crate) fn move_selected_workspace_up(&self) {
         let n_items = self.imp().workspace_list.n_items();
 
-        if n_items > 1 {
-            let i = self
-                .selected_workspace_index()
-                .unwrap_or_else(|| n_items.saturating_sub(1));
+        let i = self
+            .selected_workspace_index()
+            .unwrap_or_else(|| n_items.saturating_sub(1));
+        // The library stays first
+        if n_items > 1 && i > self.first_workspace_index() {
             let entry = self.imp().workspace_list.remove(i as usize);
-            self.insert_workspace_entry(i.saturating_sub(1), entry);
+            self.insert_workspace_entry(i - 1, entry);
         }
     }
 
@@ -163,8 +218,8 @@ impl RnWorkspacesBar {
         let n_items = self.imp().workspace_list.n_items();
         let i_max = n_items.saturating_sub(1);
 
-        if n_items > 1 {
-            let i = self.selected_workspace_index().unwrap_or(i_max);
+        let i = self.selected_workspace_index().unwrap_or(i_max);
+        if n_items > 1 && i >= self.first_workspace_index() {
             let entry = self.imp().workspace_list.remove(i as usize);
             let insert_i = (i + 1).min(i_max);
             self.insert_workspace_entry(insert_i, entry);
@@ -251,7 +306,12 @@ impl RnWorkspacesBar {
     }
 
     pub(crate) fn save_to_settings(&self, settings: &gio::Settings) {
-        if let Err(e) = settings.set("workspace-list", self.imp().workspace_list.to_variant()) {
+        let workspaces = self
+            .imp()
+            .workspace_list
+            .to_vec()
+            .split_off(self.first_workspace_index() as usize);
+        if let Err(e) = settings.set("workspace-list", workspaces.to_variant()) {
             error!("Saving `workspace-list` to settings failed , Err: {e:?}");
         }
 
@@ -282,7 +342,9 @@ impl RnWorkspacesBar {
             }
         }
 
+        self.imp().library_dir.take();
         self.imp().workspace_list.replace_self(workspace_list);
+        self.set_library(crate::library::dir());
         self.select_workspace_by_index(selected_workspace_index);
     }
 
@@ -292,18 +354,7 @@ impl RnWorkspacesBar {
         self.imp().workspace_list.connect_items_changed(clone!(
             #[weak(rename_to=workspacesbar)]
             self,
-            move |list, _, _, _| {
-                workspacesbar
-                    .imp()
-                    .remove_selected_workspace_button
-                    .get()
-                    .set_sensitive(list.n_items() > 1);
-                workspacesbar
-                    .imp()
-                    .edit_selected_workspace_button
-                    .get()
-                    .set_sensitive(list.n_items() > 0);
-            }
+            move |_, _, _, _| workspacesbar.update_buttons()
         ));
 
         let workspace_listbox = self.imp().workspaces_listbox.get();
@@ -313,6 +364,7 @@ impl RnWorkspacesBar {
             #[weak(rename_to=workspacesbar)]
             self,
             move |_| {
+                workspacesbar.update_buttons();
                 if let Some(entry) = workspacesbar.selected_workspacelistentry() {
                     let dir = entry.dir();
                     let name = entry.name();
@@ -331,6 +383,31 @@ impl RnWorkspacesBar {
                         .workspacebrowser()
                         .set_dir_list_file(Some(&gio::File::for_path(dir)));
                 }
+            }
+        ));
+
+        // A click on the library shows the library itself again, wherever its entry was moved to by opening folders
+        workspace_listbox.connect_row_activated(clone!(
+            #[weak(rename_to=workspacesbar)]
+            self,
+            move |_, row| {
+                let library_dir = workspacesbar.imp().library_dir.borrow().clone();
+                let (0, Some(library_dir)) = (row.index(), library_dir) else {
+                    return;
+                };
+                // Later, because setting the directory replaces the row that is being activated
+                glib::idle_add_local_once(clone!(
+                    #[weak]
+                    workspacesbar,
+                    move || {
+                        let shows_library = workspacesbar
+                            .selected_workspacelistentry()
+                            .is_some_and(|entry| library_dir == Path::new(&entry.dir()));
+                        if workspacesbar.library_selected() && !shows_library {
+                            workspacesbar.set_selected_workspace_dir(library_dir);
+                        }
+                    }
+                ));
             }
         ));
 
@@ -484,9 +561,11 @@ impl RnWorkspacesBar {
                     #[weak]
                     appwindow,
                     async move {
-                        let entry = workspacesbar
-                            .selected_workspacelistentry()
-                            .unwrap_or_default();
+                        // The new workspace starts as a copy of the selected entry
+                        let entry = RnWorkspaceListEntry::default();
+                        if let Some(selected) = workspacesbar.selected_workspacelistentry() {
+                            entry.replace_data(&selected);
+                        }
                         workspacesbar.push_workspace(entry);
 
                         // Popup the edit dialog after creation

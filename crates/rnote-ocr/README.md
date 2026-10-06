@@ -7,7 +7,7 @@ Everything runs on the CPU and on the device.
 
 ```mermaid
 graph TD
-    A[rnote-ui: file opened or saved] --> B["rnote-cli index FILE (background process)"]
+    A[rnote-ui: file opened or saved, or a note in the library changed on disk] --> B["rnote-cli index FILE or FOLDER (background process)"]
     B --> C[rnote-engine: split the document into units]
     C --> D1[Ink of one page]
     C --> D2[One image or Pdf page]
@@ -95,7 +95,9 @@ lines (id, unit_id, x, y, w, h, text, chars)
 Matching lives in `Query` (`query.rs`), so the app uses the same rules to search the text the open document
 carries (typed text, Pdf text) without going through the index.
 
-`Index::search(query)` goes through all lines. A line matches where the characters of the query appear in a row, each
+`Index::search(query, scope)` goes through the lines of all files, or with a scope through those of one file or of
+the files below a folder (`rnote-cli search --in FOLDER`). In the app the scope is chosen above the results:
+the open document, the folder the files list shows with the folders in it, or all notes. A line matches where the characters of the query appear in a row, each
 among the candidates of its position. Whitespace, letter case and zhuyin tone marks are ignored. A hit covers exactly the matched
 characters. Hits on the most likely readings rank first, then by confidence.
 
@@ -142,8 +144,9 @@ Measured with a debug build on a 4-core laptop, two threads used.
 | `rnote-cli index`, loading the document | Depends on the file. A small note: 275 MB peak for the whole process. A 50 MB note with a 112-page Pdf: 800 MB peak, of which about 630 MB is the loaded document |
 | Size of `rnote-cli` on disk | 21 MB more, the compiled-in models |
 
-The indexer is a separate process that the app starts for one file at a time; all of the above is given back when it
-exits. A file that did not change is skipped without being loaded (20 MB, 0.04 s).
+The indexer is a separate process that the app starts for one file, or for the library folder, at a time; all of the
+above is given back when it exits. The library is the folder set as "Notes Library" in the settings: it is indexed
+when the app starts and again when a note in it changes on disk, so notes that were never opened are found too. A file that did not change is skipped without being loaded (20 MB, 0.04 s).
 
 ## Limits
 
@@ -165,4 +168,5 @@ cargo run -p rnote-engine --example text_units -- file.rnote out-dir/
 
 cargo run -p rnote-cli -- index notes-folder/
 cargo run -p rnote-cli -- search 注音
+cargo run -p rnote-cli -- search 注音 --in notes-folder/mandarin/
 ```
