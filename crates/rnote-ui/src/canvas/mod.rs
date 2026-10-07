@@ -30,7 +30,7 @@ use rnote_engine::ext::GrapheneRectExt;
 use rnote_engine::notefolder::NoteFolder;
 use rnote_engine::{Engine, WidgetFlags};
 use std::cell::{Cell, Ref, RefCell, RefMut};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tracing::{debug, error, warn};
 
@@ -87,6 +87,9 @@ mod imp {
         pub(crate) note_folder: RefCell<Option<NoteFolder>>,
         /// Whether what other devices wrote into the note folder is being brought in.
         pub(crate) note_folder_merging: Cell<bool>,
+        /// The packed note the document was opened from, while it is not saved anywhere. It gives the document
+        /// its name.
+        pub(crate) packed_source: RefCell<Option<PathBuf>>,
         pub(crate) output_file_watcher_task: RefCell<Option<glib::JoinHandle<()>>>,
         pub(crate) output_file_modified_toast_singleton: glib::WeakRef<adw::Toast>,
         pub(crate) locked_tool_toast_singleton: glib::WeakRef<adw::Toast>,
@@ -185,6 +188,7 @@ mod imp {
                 output_file: RefCell::new(None),
                 note_folder: RefCell::new(None),
                 note_folder_merging: Cell::new(false),
+                packed_source: RefCell::new(None),
                 output_file_watcher_task: RefCell::new(None),
                 // is automatically updated whenever the output file changes.
                 output_file_modified_toast_singleton: glib::WeakRef::new(),
@@ -1014,11 +1018,16 @@ impl RnCanvas {
     ///
     /// When there is no output-file, falls back to the "New document" string
     pub(crate) fn doc_title_display(&self) -> String {
+        let packed_source = self.imp().packed_source.borrow();
         self.output_file()
             .map(|f| {
                 f.basename()
                     .and_then(|t| Some(t.file_stem()?.to_string_lossy().to_string()))
                     .unwrap_or_else(|| gettext("- invalid file name -"))
+            })
+            .or_else(|| {
+                let packed = packed_source.as_ref()?;
+                Some(packed.file_stem()?.to_string_lossy().to_string())
             })
             .unwrap_or_else(|| OUTPUT_FILE_NEW_TITLE.to_string())
     }

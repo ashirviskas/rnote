@@ -2,7 +2,7 @@
 use crate::document::background;
 use crate::engine::import::XoppImportPrefs;
 use crate::fileformats::{FileFormatLoader, rnoteformat, xoppformat};
-use crate::notefolder::Files;
+use crate::notefolder::{FileName, Files};
 use crate::store::{ChronoComponent, StrokeKey};
 use crate::strokes::Stroke;
 use crate::{Camera, Document, Engine};
@@ -52,6 +52,20 @@ impl Default for EngineSnapshot {
 }
 
 impl EngineSnapshot {
+    /// The Pdfs the pages of the document are from, for the pages that know their Pdf.
+    pub fn pdf_files(&self) -> Vec<FileName> {
+        let mut files = Vec::new();
+        for stroke in self.stroke_components.values() {
+            if let Stroke::VectorImage(image) = stroke.as_ref()
+                && let Some(pdf_page) = image.pdf_page.as_ref()
+                && !files.contains(&pdf_page.file)
+            {
+                files.push(pdf_page.file.clone());
+            }
+        }
+        files
+    }
+
     /// Loads a snapshot from the bytes of a .rnote file.
     ///
     /// To import this snapshot into the current engine, use [`Engine::load_snapshot()`].

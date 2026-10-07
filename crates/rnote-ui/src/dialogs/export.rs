@@ -10,11 +10,12 @@ use gtk4::{Builder, Button, FileDialog, FileFilter, Label, gio, glib, glib::clon
 use num_traits::ToPrimitive;
 use rnote_compose::SplitOrder;
 use rnote_engine::document::Layout;
+use rnote_engine::engine::PdfPagesExport;
 use rnote_engine::engine::export::{
     DocExportFormat, DocExportPrefs, DocPagesExportFormat, DocPagesExportPrefs,
     SelectionExportFormat, SelectionExportPrefs,
 };
-use rnote_engine::notefolder::NoteFolder;
+use rnote_engine::notefolder::{Device, FileName, NoteFolder};
 use std::cell::RefCell;
 use std::rc::Rc;
 use tracing::{debug, error};
@@ -107,6 +108,178 @@ pub(crate) async fn dialog_save_doc_as(appwindow: &RnAppWindow, canvas: &RnCanva
             )
         }
     }
+}
+
+/// Exports the document as a packed note: one file that holds the note with its Pdfs as they were, for sending
+/// it to someone.
+pub(crate) async fn dialog_export_packed_note(appwindow: &RnAppWindow, canvas: &RnCanvas) {
+    let filter = FileFilter::new();
+    filter.add_suffix(NoteFolder::PACKED_EXTENSION);
+    filter.set_name(Some(&gettext("Packed Note (.rnotez)")));
+    let filter_list = gio::ListStore::new::<FileFilter>();
+    filter_list.append(&filter);
+    let file_name = format!(
+        "{}.{}",
+        canvas.doc_title_display(),
+        NoteFolder::PACKED_EXTENSION
+    );
+    let filedialog = FileDialog::builder()
+        .title(gettext("Export Packed Note"))
+        .modal(true)
+        .accept_label(gettext("Export"))
+        .filters(&filter_list)
+        .default_filter(&filter)
+        .initial_name(file_name)
+        .build();
+    filedialog.set_initial_folder(get_initial_folder_for_export(appwindow, canvas).as_ref());
+
+    let file = match filedialog.save_future(Some(appwindow)).await {
+        Ok(file) => file,
+        Err(e) => {
+            debug!(
+                "no file selected in export packed note dialog (Error or dialog dismissed by user), Err: {e:?}"
+            );
+            return;
+        }
+    };
+    appwindow.overlays().progressbar_start_pulsing();
+    match export_packed_note(canvas, &file).await {
+        Ok(()) => {
+            appwindow.overlays().dispatch_toast_text(
+                &gettext("Exported packed note successfully"),
+                crate::overlays::TEXT_TOAST_TIMEOUT_DEFAULT,
+            );
+            appwindow.overlays().progressbar_finish();
+        }
+        Err(e) => {
+            error!("Exporting packed note failed, Err: {e:?}");
+            appwindow
+                .overlays()
+                .dispatch_toast_error(&gettext("Exporting packed note failed"));
+            appwindow.overlays().progressbar_abort();
+        }
+    }
+}
+
+/// Packs the document as it is right now into the file.
+async fn export_packed_note(canvas: &RnCanvas, file: &gio::File) -> anyhow::Result<()> {
+    let path = file
+        .path()
+        .ok_or_else(|| anyhow::anyhow!("The file to export to has no path."))?;
+    let engine_snapshot = canvas.engine_ref().take_snapshot();
+    // The Pdfs are packed as they were when they are at hand. Pages whose Pdf is not are packed whole.
+    if let Err(e) = canvas.load_files(&engine_snapshot.pdf_files()).await {
+        debug!("Not all Pdfs of the document are at hand to be packed, Err: {e:?}");
+    }
+    let device = Device::this()?;
+    blocking::unblock(move || NoteFolder::pack_snapshot(&engine_snapshot, device, &path)).await
+}
+
+/// Exports the pages of the Pdfs the document keeps as they were: the selected pages, or all when none is
+/// selected.
+pub(crate) async fn dialog_export_pdf_pages(
+    appwindow: &RnAppWindow,
+    canvas: &RnCanvas,
+    export: PdfPagesExport,
+) {
+    let files = canvas.engine_ref().pdf_page_files();
+    if files.is_empty() {
+        appwindow.overlays().dispatch_toast_error(&gettext(
+            "The document has no pages of a Pdf that it keeps as it was",
+        ));
+        return;
+    }
+
+    // The original pages of several Pdfs can be exported as one Pdf for each of them
+    let mut one_for_each = false;
+    if export == PdfPagesExport::Original && files.len() > 1 {
+        let builder = Builder::from_resource(
+            (String::from(config::APP_IDPATH) + "ui/dialogs/dialogs.ui").as_str(),
+        );
+        let dialog: adw::AlertDialog = builder.object("dialog_original_pdf_pages").unwrap();
+        match dialog.choose_future(Some(appwindow)).await.as_str() {
+            "one" => {}
+            "each" => one_for_each = true,
+            _ => return,
+        }
+    }
+
+    let filter = FileFilter::new();
+    if cfg!(target_os = "windows") {
+        filter.add_pattern("*.pdf");
+    } else {
+        filter.add_mime_type("application/pdf");
+    }
+    if cfg!(target_os = "macos") {
+        filter.add_suffix("pdf");
+    }
+    filter.set_name(Some(&gettext("Pdf")));
+    let filter_list = gio::ListStore::new::<FileFilter>();
+    filter_list.append(&filter);
+    let filedialog = FileDialog::builder()
+        .title(gettext("Export Pdf Pages"))
+        .modal(true)
+        .accept_label(gettext("Export"))
+        .filters(&filter_list)
+        .default_filter(&filter)
+        .initial_name(canvas.doc_title_display() + ".pdf")
+        .build();
+    filedialog.set_initial_folder(get_initial_folder_for_export(appwindow, canvas).as_ref());
+
+    let file = match filedialog.save_future(Some(appwindow)).await {
+        Ok(file) => file,
+        Err(e) => {
+            debug!(
+                "no file selected in export pdf pages dialog (Error or dialog dismissed by user), Err: {e:?}"
+            );
+            return;
+        }
+    };
+    appwindow.overlays().progressbar_start_pulsing();
+    match export_pdf_pages(canvas, export, &files, one_for_each, &file).await {
+        Ok(()) => {
+            appwindow.overlays().dispatch_toast_text(
+                &gettext("Exported Pdf pages successfully"),
+                crate::overlays::TEXT_TOAST_TIMEOUT_DEFAULT,
+            );
+            appwindow.overlays().progressbar_finish();
+        }
+        Err(e) => {
+            error!("Exporting Pdf pages failed, Err: {e:?}");
+            appwindow
+                .overlays()
+                .dispatch_toast_error(&gettext("Exporting Pdf pages failed"));
+            appwindow.overlays().progressbar_abort();
+        }
+    }
+}
+
+/// Writes the pages of the Pdfs into the file. With `one_for_each`, into one file for each Pdf: the file with a
+/// number added to its name.
+async fn export_pdf_pages(
+    canvas: &RnCanvas,
+    export: PdfPagesExport,
+    files: &[FileName],
+    one_for_each: bool,
+    file: &gio::File,
+) -> anyhow::Result<()> {
+    canvas.load_files(files).await?;
+    if !one_for_each {
+        let bytes = canvas.engine_ref().export_pdf_pages(export, None);
+        return crate::utils::create_replace_file_future(bytes.await??, file).await;
+    }
+
+    let path = file
+        .path()
+        .ok_or_else(|| anyhow::anyhow!("The file to export to has no path."))?;
+    let name = path.file_stem().unwrap_or_default().to_string_lossy();
+    for (i, pdf_file) in files.iter().enumerate() {
+        let bytes = canvas.engine_ref().export_pdf_pages(export, Some(pdf_file));
+        let numbered = format!("{name}{}{}.pdf", crate::utils::FILE_DUP_SUFFIX_DELIM, i + 1);
+        let file = gio::File::for_path(path.with_file_name(numbered));
+        crate::utils::create_replace_file_future(bytes.await??, &file).await?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn dialog_export_doc_w_prefs(appwindow: &RnAppWindow, canvas: &RnCanvas) {

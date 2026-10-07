@@ -43,6 +43,7 @@ glib-build-tools = "0.21.0"
 gtk4 = { version = "0.10.0", features = ["v4_18"] }
 hayro = { git = "https://github.com/LaurenzV/hayro", rev = "56c62b2a25232d5407af8efe819c49ad46605979" }
 hayro-svg = { git = "https://github.com/LaurenzV/hayro", rev = "56c62b2a25232d5407af8efe819c49ad46605979" }
+hayro-write = { git = "https://github.com/LaurenzV/hayro", rev = "56c62b2a25232d5407af8efe819c49ad46605979" }
 ijson = "0.1.4"
 image = { version = "0.25.6", default-features = false, features = [
     "rayon",
@@ -73,6 +74,7 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = [
 palette = "0.7.6"
 parry2d-f64 = { version = "0.26.0", features = ["serde-serialize"] }
 path-absolutize = "3.1"
+pdf-writer = "0.14.0"
 piet = "0.8.0"
 piet-cairo = "0.8.0"
 rand = "0.10.0"
@@ -104,6 +106,7 @@ url = "2.5"
 usvg = "0.47.0"
 winresource = "0.1.20"
 xmlwriter = "0.1.0"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 [patch.crates-io]
 

@@ -8,11 +8,12 @@ use rnote_compose::ext::Vector2Ext;
 use rnote_engine::WidgetFlags;
 use rnote_engine::engine::export::{DocExportPrefs, DocPagesExportPrefs, SelectionExportPrefs};
 use rnote_engine::engine::{EngineSnapshot, StrokeContent};
-use rnote_engine::notefolder::{Device, NoteFolder};
+use rnote_engine::notefolder::{Device, FileName, NoteFolder};
 use rnote_engine::strokes::Stroke;
 use rnote_engine::strokes::resize::ImageSizeOption;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tracing::{debug, error};
 
 impl RnCanvas {
@@ -55,6 +56,23 @@ impl RnCanvas {
         Ok(self.load_in_engine_snapshot(engine_snapshot, Some(dir), Some(note_folder)))
     }
 
+    /// Loads a packed note as a new document: it is not saved anywhere until the user saves it, and then it goes
+    /// where they put it, with its Pdfs. The document is named after the packed note.
+    pub(crate) async fn load_in_packed_note(&self, packed: PathBuf) -> anyhow::Result<WidgetFlags> {
+        let device = Device::this()?;
+        let load = blocking::unblock({
+            let packed = packed.clone();
+            move || NoteFolder::load_packed(&packed, device)
+        });
+        let engine_snapshot = load.await?;
+        let widget_flags = self.load_in_engine_snapshot(engine_snapshot, None, None);
+        self.imp().packed_source.replace(Some(packed));
+        // The titles follow the output file, and the name of the document changed with the source
+        self.notify("output-file");
+        self.set_unsaved_changes(true);
+        Ok(widget_flags)
+    }
+
     /// Imports the snapshot of a note that was loaded from the path into the engine.
     fn load_in_engine_snapshot(
         &self,
@@ -68,6 +86,7 @@ impl RnCanvas {
             .set_scale_factor(self.scale_factor() as f64);
 
         self.imp().note_folder.replace(note_folder);
+        self.imp().packed_source.take();
         self.set_output_file(path.map(gio::File::for_path));
         self.dismiss_output_file_modified_toast();
         self.set_unsaved_changes(false);
@@ -318,6 +337,7 @@ impl RnCanvas {
 
         if !skip_set_output_file {
             // We only create/replace the file watcher once we are sure the file was successfully saved.
+            self.imp().packed_source.take();
             self.set_output_file(Some(file.to_owned()));
             // Required, otherwise `output_file_expect_write` will be stuck on true after saving for the
             // first time or saving as another filename, until the subsequent save at least.
@@ -361,6 +381,40 @@ impl RnCanvas {
         let (note_folder, saved) = save.await;
         self.imp().note_folder.replace(note_folder);
         saved
+    }
+
+    /// Makes sure the files are among the files of the document, where the engine takes them from to export the
+    /// pages of a Pdf. A document that was loaded from a note folder has them in the folder only.
+    pub(crate) async fn load_files(&self, files: &[FileName]) -> anyhow::Result<()> {
+        let missing = files
+            .iter()
+            .filter(|file| self.engine_ref().files.get(file).is_none())
+            .cloned()
+            .collect::<Vec<FileName>>();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let dir = self
+            .imp()
+            .note_folder
+            .borrow()
+            .as_ref()
+            .map(|note_folder| note_folder.dir().to_path_buf())
+            .ok_or_else(|| anyhow::anyhow!("The files of the document are not at hand."))?;
+
+        let read = blocking::unblock({
+            let missing = missing.clone();
+            move || {
+                let read = missing.iter().map(|file| NoteFolder::read_file(&dir, file));
+                read.collect::<anyhow::Result<Vec<Vec<u8>>>>()
+            }
+        });
+        for (file, bytes) in missing.iter().zip(read.await?) {
+            self.engine_ref()
+                .files
+                .insert(Arc::new(bytes), file.extension());
+        }
+        Ok(())
     }
 
     pub(crate) async fn export_doc(

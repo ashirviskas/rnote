@@ -7,7 +7,7 @@ use rnote_compose::shapes::Shapeable;
 use rnote_engine::Engine;
 use rnote_engine::engine::export::{TextLayer, TextUnit};
 use rnote_engine::notefolder::NoteFolder;
-use rnote_ocr::{Bounds, CharBox, FileStamp, Index, Line, Recognizer, Source, Unit};
+use rnote_ocr::{Bounds, CharBox, FileStamp, Index, Line, Recognizer, Source, Unit, textfiles};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -43,8 +43,11 @@ pub(crate) async fn run_index(paths: &[PathBuf], zhuyin: bool) -> anyhow::Result
         )
         .await
         {
-            Ok(n_read) => {
-                let finish_msg = format!("Indexed \"{file_disp}\", {n_read} changed unit(s) read.");
+            Ok(done) => {
+                let finish_msg = format!(
+                    "Indexed \"{file_disp}\", {} changed unit(s) read, {} taken from the note.",
+                    done.recognized, done.from_note
+                );
                 if progressbar.is_hidden() {
                     println!("{finish_msg}");
                 }
@@ -111,23 +114,36 @@ fn rnote_files(paths: &[PathBuf]) -> anyhow::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// Brings the index up to date with the file. Returns how many units were read.
+/// What indexing a note did.
+#[derive(Debug, Clone, Copy, Default)]
+struct Indexed {
+    /// How many units were recognised.
+    recognized: usize,
+    /// How many units got their text from the text files of the note folder, read by another device.
+    from_note: usize,
+}
+
+/// Brings the index up to date with the file.
 async fn index_file(
     index: &mut Index,
     recognizer: &mut Option<Recognizer>,
     rnote_file: &Path,
     stamp: FileStamp,
     progressbar: &indicatif::ProgressBar,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<Indexed> {
     let engine_snapshot = cli::load_note(rnote_file).await?;
     let mut engine = Engine::default();
     let _ = engine.load_snapshot(engine_snapshot);
+    // A note folder keeps the text that was read from it, for the other devices that have the note
+    let text_dir = rnote_file
+        .is_dir()
+        .then(|| rnote_file.join(NoteFolder::TEXT_DIR_NAME));
 
     let text_units = engine.extract_text_units(SplitOrder::default());
     let indexed = index.unit_hashes(rnote_file)?;
     let mut units = Vec::with_capacity(text_units.len());
     let mut hashes = HashSet::new();
-    let mut n_read = 0;
+    let mut done = Indexed::default();
     for (i, text_unit) in text_units.iter().enumerate() {
         let unit = Unit {
             // What is read from a unit depends on whether zhuyin is read
@@ -150,14 +166,46 @@ async fn index_file(
                 i + 1,
                 text_units.len()
             ));
-            let lines = read_unit(recognizer, text_unit, stamp.zhuyin)?;
+            let kept = text_dir
+                .as_ref()
+                .and_then(|dir| textfiles::read(dir, unit.hash));
+            let lines = match kept {
+                Some(lines) => {
+                    done.from_note += 1;
+                    lines
+                }
+                None => {
+                    let read = read_unit(recognizer, text_unit, stamp.zhuyin)?;
+                    if read.recognized {
+                        done.recognized += 1;
+                        if let Some(dir) = &text_dir {
+                            textfiles::write(dir, unit.hash, &read.lines)?;
+                        }
+                    }
+                    read.lines
+                }
+            };
             index.insert_unit(rnote_file, unit, &lines)?;
-            n_read += 1;
         }
         units.push(unit);
     }
     index.finish_file(rnote_file, stamp, &units)?;
-    Ok(n_read)
+    if let Some(dir) = &text_dir {
+        // The text of units the note no longer has. Both readings of a unit are kept, with and without zhuyin.
+        let kept = hashes
+            .iter()
+            .flat_map(|hash| [hash.wrapping_sub(1), *hash, hash.wrapping_add(1)])
+            .collect::<HashSet<u64>>();
+        textfiles::retain(dir, &kept)?;
+    }
+    Ok(done)
+}
+
+/// The text of a unit, and whether it had to be recognised.
+#[derive(Debug, Clone)]
+struct UnitText {
+    lines: Vec<Line>,
+    recognized: bool,
 }
 
 /// Reads the text lines of the unit, positioned on the document.
@@ -165,7 +213,11 @@ fn read_unit(
     recognizer: &mut Option<Recognizer>,
     text_unit: &TextUnit,
     zhuyin: bool,
-) -> anyhow::Result<Vec<Line>> {
+) -> anyhow::Result<UnitText> {
+    let carried = |lines| UnitText {
+        lines,
+        recognized: false,
+    };
     // Text that a stroke carries needs no recognition: typed text, and the text layer of an imported Pdf page
     let mut lines = Vec::new();
     for stroke in text_unit.content.strokes.iter() {
@@ -187,29 +239,33 @@ fn read_unit(
         }));
     }
     if !lines.is_empty() || text_unit.layer == TextLayer::Typed {
-        return Ok(lines);
+        return Ok(carried(lines));
     }
 
     let Some(size) = text_unit.content.size() else {
-        return Ok(Vec::new());
+        return Ok(carried(Vec::new()));
     };
     let scale = RENDER_SCALE.min(RENDER_MAX_SIDE / size.max_element());
     let Some(image) = text_unit
         .content
         .gen_image(true, false, false, 0.0, scale)?
     else {
-        return Ok(Vec::new());
+        return Ok(carried(Vec::new()));
     };
     let origin = image.rectangle.bounds().mins;
     let recognizer = match recognizer {
         Some(recognizer) => recognizer,
         None => recognizer.insert(Recognizer::new(zhuyin)?),
     };
-    Ok(recognizer
+    let lines = recognizer
         .recognize(&flatten(image)?)?
         .into_iter()
         .map(|line| line.onto_document((origin.x, origin.y), scale))
-        .collect())
+        .collect();
+    Ok(UnitText {
+        lines,
+        recognized: true,
+    })
 }
 
 /// Lays the image over white. The recogniser needs an opaque image.

@@ -27,6 +27,7 @@
 
 // Modules
 mod files;
+mod pack;
 mod pagecache;
 mod record;
 mod tidy;
@@ -34,6 +35,7 @@ mod tidy;
 // Re-exports
 pub use files::{FileName, Files};
 pub use pagecache::PageCache;
+pub(crate) use record::stable_content_hash;
 pub use record::{DeviceId, Stamp};
 pub use tidy::TidyReport;
 
@@ -131,6 +133,9 @@ impl NoteFolder {
     const FORMAT: u32 = 1;
     const INK_DIR_NAME: &'static str = "ink";
     const FILES_DIR_NAME: &'static str = "files";
+    /// The directory of a note folder for the text that was read from the note. The engine does not read text;
+    /// who does keeps it there, so that it is synced with the note.
+    pub const TEXT_DIR_NAME: &'static str = "text";
 
     /// The note folder the path stands for: the path of a note folder itself, or of its entry file.
     pub fn folder_of(path: &Path) -> Option<PathBuf> {
@@ -146,6 +151,22 @@ impl NoteFolder {
         path.parent()
             .filter(|_| is_entry && path.is_file())
             .map(Path::to_path_buf)
+    }
+
+    /// Reads a file of the note folder at the directory. What is read is checked against the name of the file,
+    /// which is the hash of what it has to hold.
+    pub fn read_file(dir: &Path, file: &FileName) -> anyhow::Result<Vec<u8>> {
+        let path = file
+            .path_in(&dir.join(Self::FILES_DIR_NAME))
+            .with_context(|| format!("{file:?} is not a valid file name."))?;
+        let bytes = std::fs::read(&path)
+            .with_context(|| format!("Reading the file {path:?} of the note failed."))?;
+        if FileName::of(&bytes, file.extension()) != *file {
+            return Err(anyhow::anyhow!(
+                "The file {path:?} of the note is not what it was when it was saved."
+            ));
+        }
+        Ok(bytes)
     }
 
     /// Makes a new, empty note folder.

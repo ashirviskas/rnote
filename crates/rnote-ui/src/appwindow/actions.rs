@@ -13,7 +13,7 @@ use p2d::math::Vector2;
 use rnote_compose::SplitOrder;
 use rnote_compose::penevent::ShortcutKey;
 use rnote_engine::document::format::MeasureUnit;
-use rnote_engine::engine::StrokeContent;
+use rnote_engine::engine::{PdfPagesExport, StrokeContent};
 use rnote_engine::ext::GraphenePointExt;
 use rnote_engine::pens::PenStyle;
 use rnote_engine::strokes::resize::{ImageSizeOption, Resize};
@@ -117,6 +117,14 @@ impl RnAppWindow {
         self.add_action(&action_export_doc_pages);
         let action_export_selection = gio::SimpleAction::new("export-selection", None);
         self.add_action(&action_export_selection);
+        let action_export_packed_note = gio::SimpleAction::new("export-packed-note", None);
+        self.add_action(&action_export_packed_note);
+        let action_export_pdf_pages_with_notes =
+            gio::SimpleAction::new("export-pdf-pages-with-notes", None);
+        self.add_action(&action_export_pdf_pages_with_notes);
+        let action_export_pdf_pages_original =
+            gio::SimpleAction::new("export-pdf-pages-original", None);
+        self.add_action(&action_export_pdf_pages_original);
         let action_text_bold = gio::SimpleAction::new("text-bold", None);
         self.add_action(&action_text_bold);
         let action_text_italic = gio::SimpleAction::new("text-italic", None);
@@ -1025,6 +1033,51 @@ impl RnAppWindow {
                 ));
             }
         ));
+
+        // Export the document as a packed note
+        action_export_packed_note.connect_activate(clone!(
+            #[weak(rename_to=appwindow)]
+            self,
+            move |_, _| {
+                glib::spawn_future_local(clone!(
+                    #[weak]
+                    appwindow,
+                    async move {
+                        let Some(canvas) = appwindow.active_tab_canvas() else {
+                            return;
+                        };
+                        dialogs::export::dialog_export_packed_note(&appwindow, &canvas).await;
+                    }
+                ));
+            }
+        ));
+
+        // Export the pages of kept Pdfs
+        for (action, export) in [
+            (
+                action_export_pdf_pages_with_notes,
+                PdfPagesExport::WithNotes,
+            ),
+            (action_export_pdf_pages_original, PdfPagesExport::Original),
+        ] {
+            action.connect_activate(clone!(
+                #[weak(rename_to=appwindow)]
+                self,
+                move |_, _| {
+                    glib::spawn_future_local(clone!(
+                        #[weak]
+                        appwindow,
+                        async move {
+                            let Some(canvas) = appwindow.active_tab_canvas() else {
+                                return;
+                            };
+                            dialogs::export::dialog_export_pdf_pages(&appwindow, &canvas, export)
+                                .await;
+                        }
+                    ));
+                }
+            ));
+        }
 
         // Export document pages
         action_export_doc_pages.connect_activate(clone!(

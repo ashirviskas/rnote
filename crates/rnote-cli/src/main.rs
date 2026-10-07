@@ -9,6 +9,7 @@ pub(crate) mod create;
 pub(crate) mod export;
 pub(crate) mod import;
 pub(crate) mod index;
+pub(crate) mod pdfpages;
 pub(crate) mod search;
 pub(crate) mod test;
 pub(crate) mod thumbnail;

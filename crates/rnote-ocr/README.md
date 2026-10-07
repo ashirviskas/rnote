@@ -144,6 +144,11 @@ Measured with a debug build on a 4-core laptop, two threads used.
 | `rnote-cli index`, loading the document | Depends on the file. A small note: 275 MB peak for the whole process. A 50 MB note with a 112-page Pdf: 800 MB peak, of which about 630 MB is the loaded document |
 | Size of `rnote-cli` on disk | 21 MB more, the compiled-in models |
 
+A note folder (`.rnoted`) keeps the text that was read from its units in its `text` directory
+(`rnote_ocr::textfiles`), named by the unit hash and `TEXT_VERSION`. Another device that has the note takes the text
+from there instead of recognising again. The unit hash is the same on every device: a Pdf page is hashed by which
+page of which Pdf it is, not by what is drawn of it.
+
 The indexer is a separate process that the app starts for one file, or for the library folder, at a time; all of the
 above is given back when it exits. The library is the folder set as "Notes Library" in the settings: it is indexed
 when the app starts and again when a note in it changes on disk, so notes that were never opened are found too. A file that did not change is skipped without being loaded (20 MB, 0.04 s).

@@ -590,6 +590,7 @@ fn create_files_filter() -> EveryFilter {
     file_filter.add_suffix("jpg");
     file_filter.add_suffix("jpeg");
     file_filter.add_suffix("txt");
+    file_filter.add_suffix(NoteFolder::PACKED_EXTENSION);
     let hidden_filter = create_hidden_filter();
 
     let every_filter = EveryFilter::new();

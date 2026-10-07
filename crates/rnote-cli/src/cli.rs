@@ -1,5 +1,5 @@
 // Imports
-use crate::{convert, create, export, import, index, search, test, thumbnail};
+use crate::{convert, create, export, import, index, pdfpages, search, test, thumbnail};
 use anyhow::Context;
 use clap::Parser;
 use rnote_compose::SplitOrder;
@@ -103,6 +103,33 @@ pub(crate) enum Command {
         input: PathBuf,
         /// The new note. It must not exist yet.
         output: PathBuf,
+    },
+    /// Packs a note folder into one file (`.rnotez`), for sending the note to someone.{n}
+    /// The file holds the note with its Pdfs as they were, and nothing that was removed from it.
+    Pack {
+        /// The note folder.
+        note: PathBuf,
+        /// The packed note to write.
+        packed: PathBuf,
+    },
+    /// Unpacks a packed note (`.rnotez`) into a new note folder.
+    Unpack {
+        /// The packed note.
+        packed: PathBuf,
+        /// The note folder to make. It must not exist yet.
+        note: PathBuf,
+    },
+    /// Takes the pages of the Pdfs that a note folder keeps out of it again, as one Pdf.{n}
+    /// The pages are not drawn again, their text stays text. What is drawn over a page in the note is laid on
+    /// top of it, unless "--original" is given.
+    PdfPages {
+        /// The note folder.
+        note: PathBuf,
+        /// The Pdf to write.
+        output: PathBuf,
+        /// The pages as they are in their Pdf. A note with all pages of one Pdf gives that Pdf, byte for byte.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        original: bool,
     },
     /// Reads the text of notes (handwriting, images, typed text) and adds it to the search index.{n}
     /// Only the parts of a note that changed since it was last indexed are read again.
@@ -325,6 +352,27 @@ pub(crate) async fn run() -> anyhow::Result<()> {
         }
         Command::Convert { input, output } => {
             convert::run_convert(&input, &output).await?;
+        }
+        Command::Pack { note, packed } => {
+            let dir = NoteFolder::folder_of(&note)
+                .with_context(|| format!("\"{}\" is not a note folder.", note.display()))?;
+            NoteFolder::pack(&dir, Device::this()?, &packed)?;
+            println!("Packed \"{}\" to \"{}\".", note.display(), packed.display());
+        }
+        Command::Unpack { packed, note } => {
+            NoteFolder::unpack(&packed, &note)?;
+            println!(
+                "Unpacked \"{}\" to \"{}\".",
+                packed.display(),
+                note.display()
+            );
+        }
+        Command::PdfPages {
+            note,
+            output,
+            original,
+        } => {
+            pdfpages::run_pdf_pages(&note, &output, original).await?;
         }
         Command::Index { paths, zhuyin } => {
             index::run_index(&paths, zhuyin).await?;
