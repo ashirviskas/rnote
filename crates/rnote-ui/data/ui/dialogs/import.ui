@@ -129,41 +129,15 @@
                       </object>
                     </child>
                     <child>
-                      <object class="AdwActionRow" id="pdf_import_pages_type_row">
-                        <property name="title" translatable="yes">Pages Type</property>
-                        <property name="subtitle" translatable="yes">Set whether Pdf's should be imported as vector or bitmap images</property>
-                        <child type="suffix">
-                          <object class="GtkBox">
-                            <property name="orientation">horizontal</property>
-                            <property name="homogeneous">true</property>
-                            <property name="vexpand">false</property>
-                            <property name="valign">center</property>
-                            <style>
-                              <class name="linked" />
-                            </style>
-                            <child>
-                              <object class="GtkToggleButton" id="pdf_import_as_vector_toggle">
-                                <property name="label" translatable="yes">Vector</property>
-                                <property name="active">true</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkToggleButton" id="pdf_import_as_bitmap_toggle">
-                                <property name="group">pdf_import_as_vector_toggle</property>
-                                <property name="label" translatable="yes">Bitmap</property>
-                              </object>
-                            </child>
+                      <object class="AdwActionRow" id="pdf_import_kept_row">
+                        <property name="title" translatable="yes">The Pdf Is Kept</property>
+                        <property name="subtitle" translatable="yes">The pages are drawn from the Pdf, which stays with the note as it is. They can be exported again, as they are or with the notes on them</property>
+                        <property name="subtitle-lines">0</property>
+                        <child type="prefix">
+                          <object class="GtkImage">
+                            <property name="icon-name">workspacelistentryicon-document-symbolic</property>
                           </object>
                         </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwSpinRow" id="pdf_import_bitmap_scalefactor_row">
-                        <property name="title" translatable="yes">Bitmap Scale-Factor</property>
-                        <property name="subtitle" translatable="yes">Set the bitmap scale factor in relation
-to the actual size on the document</property>
-                        <property name="adjustment">pdf_import_bitmap_scalefactor_adj</property>
-                        <property name="digits">1</property>
                       </object>
                     </child>
                   </object>
@@ -188,12 +162,6 @@ to the actual size on the document</property>
     <property name="upper">100</property>
     <property name="lower">1</property>
     <property name="value">50</property>
-  </object>
-  <object class="GtkAdjustment" id="pdf_import_bitmap_scalefactor_adj">
-    <property name="step-increment">0.1</property>
-    <property name="upper">10.0</property>
-    <property name="lower">0.1</property>
-    <property name="value">1.0</property>
   </object>
 
   <object class="AdwDialog" id="dialog_import_xopp_w_prefs">
