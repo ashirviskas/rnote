@@ -23,6 +23,12 @@ impl FileName {
         &self.0
     }
 
+    pub fn extension(&self) -> &str {
+        self.0
+            .split_once('.')
+            .map_or("", |(_, extension)| extension)
+    }
+
     /// The name without its ending.
     pub(crate) fn stem(&self) -> &str {
         self.0.split('.').next().unwrap_or_default()

@@ -6,6 +6,7 @@ rnote_cli_sources = files(
     'import.rs',
     'index.rs',
     'main.rs',
+    'pdfpages.rs',
     'search.rs',
     'test.rs',
     'validators.rs',

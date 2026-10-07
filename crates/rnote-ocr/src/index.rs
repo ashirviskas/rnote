@@ -42,7 +42,7 @@ impl Index {
     const FILE_NAME: &'static str = "index.sqlite";
     /// To be raised whenever the tables or the recognition models change. An index of another version is emptied
     /// and fills again as files get indexed.
-    const VERSION: i32 = 2;
+    const VERSION: i32 = 3;
     // The stamp of a file is zero until all of its units are indexed.
     const SCHEMA: &'static str = "
         PRAGMA foreign_keys = ON;

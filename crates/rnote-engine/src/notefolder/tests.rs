@@ -643,3 +643,86 @@ fn without_its_pdf_a_page_is_saved_whole() {
     let b = Desk::open_on(&dir, device_with_cache("bbbb", tmp.path().join("cache b")));
     assert_eq!(b.images()[0].svg_data, a.images()[0].svg_data);
 }
+
+#[test]
+fn a_packed_note_holds_the_note_and_nothing_that_was_removed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = note_dir(&tmp);
+    let cache = |name: &str| tmp.path().join(name);
+    let mut a = Desk::create_on(&dir, device_with_cache("aaaa", cache("cache a")));
+    let (_, removed) = (a.add(1.0), a.add(2.0));
+    import_pdf(&mut a);
+    a.save();
+    let mut b = Desk::open_on(&dir, device_with_cache("bbbb", cache("cache b")));
+    b.remove(removed);
+    b.add(3.0);
+    b.save();
+    // The folder still holds the removed stroke and the mark of its removal
+    assert_eq!(on_disk_of(&dir, removed).len(), 2);
+
+    let packed = tmp.path().join("Lesson 1.rnotez");
+    NoteFolder::pack(&dir, device_with_cache("bbbb", cache("cache b")), &packed).unwrap();
+    let unpacked = tmp.path().join("Unpacked.rnoted");
+    NoteFolder::unpack(&packed, &unpacked).unwrap();
+
+    // The note is all there for someone who has nothing of it: strokes, the Pdf, its page
+    assert_eq!(NoteFolder::folder_of(&unpacked), Some(unpacked.clone()));
+    let c = Desk::open_on(&unpacked, device_with_cache("cccc", cache("cache c")));
+    assert_eq!(c.xs().iter().filter(|x| !x.is_nan()).count(), 2);
+    assert!(c.images()[0].svg_data.starts_with("<svg"));
+    let file = FileName::of(PDF, "pdf");
+    assert_eq!(
+        std::fs::read(unpacked.join("files").join(file.as_str())).unwrap(),
+        PDF
+    );
+    // What was removed is not in it, and neither are the batches of two devices
+    assert_eq!(on_disk_of(&unpacked, removed), []);
+    assert_eq!(n_batches(&unpacked), 1);
+
+    // Loaded without unpacking, the note is all there too, with its Pdf among the files
+    let loaded =
+        NoteFolder::load_packed(&packed, device_with_cache("dddd", cache("cache d"))).unwrap();
+    assert_eq!(loaded.stroke_components.len(), 3);
+    assert!(loaded.files.get(&file).is_some());
+
+    // An existing folder is not written into, and other files are no packed notes
+    assert!(NoteFolder::unpack(&packed, &unpacked).is_err());
+    let no_note = tmp.path().join("other.rnotez");
+    std::fs::write(&no_note, b"not a zip").unwrap();
+    assert!(NoteFolder::unpack(&no_note, &tmp.path().join("Other.rnoted")).is_err());
+}
+
+#[test]
+fn the_hash_of_a_pdf_page_unit_does_not_depend_on_what_is_drawn_of_it() {
+    use crate::engine::StrokeContent;
+    use crate::engine::export::{TextLayer, TextUnit};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let mut a = Desk::create_on(
+        &note_dir(&tmp),
+        device_with_cache("aaaa", tmp.path().join("cache")),
+    );
+    import_pdf(&mut a);
+    let page = a.images()[0].clone();
+    let unit = |image: VectorImage| TextUnit {
+        page: 0,
+        layer: TextLayer::Image,
+        content: StrokeContent::default().with_strokes(vec![Arc::new(Stroke::VectorImage(image))]),
+    };
+
+    // What another device makes of the page is not the same, byte for byte
+    let mut drawn_elsewhere = page.clone();
+    drawn_elsewhere
+        .svg_data
+        .push_str("<!-- drawn elsewhere -->");
+    let hash = unit(page.clone()).content_hash().unwrap();
+    assert_eq!(unit(drawn_elsewhere).content_hash().unwrap(), hash);
+
+    // Another page of the Pdf, or a page that does not know its Pdf, is something else
+    let mut other_page = page.clone();
+    other_page.pdf_page.as_mut().unwrap().page = 1;
+    assert_ne!(unit(other_page).content_hash().unwrap(), hash);
+    let mut whole = page.clone();
+    whole.pdf_page = None;
+    assert_ne!(unit(whole).content_hash().unwrap(), hash);
+}

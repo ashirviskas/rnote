@@ -5,4 +5,16 @@
      <glob pattern="*.rnote"/>
      <generic-icon name="application-@APP_NAME@"/>
    </mime-type>
+   <!-- The entry file of a note folder: the file in the folder that opens the note -->
+   <mime-type type="application/rnote-folder">
+     <comment>Rnote note folder</comment>
+     <glob pattern="*.rnoted"/>
+     <generic-icon name="application-@APP_NAME@"/>
+   </mime-type>
+   <mime-type type="application/rnote-packed">
+     <comment>Rnote packed note</comment>
+     <sub-class-of type="application/zip"/>
+     <glob pattern="*.rnotez"/>
+     <generic-icon name="application-@APP_NAME@"/>
+   </mime-type>
 </mime-info>

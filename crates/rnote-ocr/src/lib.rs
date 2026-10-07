@@ -11,6 +11,7 @@ pub mod query;
 #[cfg(feature = "recognize")]
 pub mod recognize;
 pub mod select;
+pub mod textfiles;
 
 // Re-exports
 pub use index::{FileStamp, Index};
@@ -34,7 +35,7 @@ pub fn data_dir() -> anyhow::Result<PathBuf> {
 }
 
 /// An axis-aligned rectangle.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Bounds {
     pub x: f64,
     pub y: f64,
@@ -88,7 +89,7 @@ impl CharBox {
 }
 
 /// A line of text.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Line {
     pub bounds: Bounds,
     pub chars: Vec<CharBox>,

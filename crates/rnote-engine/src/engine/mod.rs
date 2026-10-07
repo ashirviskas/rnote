@@ -3,6 +3,7 @@ pub mod animation;
 pub mod config;
 pub mod export;
 pub mod import;
+pub mod pdfpages;
 pub mod rendering;
 pub mod snapshot;
 pub mod strokecontent;
@@ -14,6 +15,7 @@ pub use config::EngineConfig;
 pub use config::EngineConfigShared;
 pub use export::ExportPrefs;
 pub use import::ImportPrefs;
+pub use pdfpages::PdfPagesExport;
 pub use snapshot::EngineSnapshot;
 pub use strokecontent::StrokeContent;
 

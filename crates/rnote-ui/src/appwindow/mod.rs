@@ -759,6 +759,30 @@ impl RnAppWindow {
                 }
                 false
             }
+            FileType::PackedNote => {
+                // A packed note opens as a new document, to be saved where the user wants it
+                let packed = input_file.path().ok_or_else(|| {
+                    anyhow::anyhow!("Could not open file '{input_file:?}', file path is None.")
+                })?;
+                self.present();
+                let wrapper = match self.active_tab_wrapper() {
+                    // Reuse the existing empty tab
+                    Some(active_wrapper)
+                        if active_wrapper.canvas().empty()
+                            && active_wrapper.canvas().output_file().is_none() =>
+                    {
+                        active_wrapper
+                    }
+                    _ => {
+                        let wrapper = self.new_canvas_wrapper();
+                        self.append_wrapper_new_tab(&wrapper);
+                        wrapper
+                    }
+                };
+                let widget_flags = wrapper.canvas().load_in_packed_note(packed).await?;
+                self.handle_widget_flags(widget_flags, &wrapper.canvas());
+                true
+            }
             FileType::Unsupported => {
                 return Err(anyhow::anyhow!("Tried to open unsupported file type"));
             }

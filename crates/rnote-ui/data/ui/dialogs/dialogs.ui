@@ -206,6 +206,18 @@ Changes which are not saved will be permanently lost.</property>
     </child>
   </object>
 
+  <object class="AdwAlertDialog" id="dialog_original_pdf_pages">
+    <property name="heading" translatable="yes">Pages of Several Pdfs</property>
+    <property name="body" translatable="yes">The pages are from more than one Pdf. They can be exported together as one Pdf, or as one Pdf for each.</property>
+    <property name="default-response">one</property>
+    <property name="close-response">cancel</property>
+    <responses>
+      <response id="cancel" translatable="yes">Cancel</response>
+      <response id="each" translatable="yes">One for Each</response>
+      <response id="one" appearance="suggested" translatable="yes">One Pdf</response>
+    </responses>
+  </object>
+
   <object class="AdwAlertDialog" id="dialog_trash_file">
     <property name="heading" translatable="yes">Trash File</property>
     <property name="body" translatable="yes">Are you sure you want to move this file to the trash?</property>

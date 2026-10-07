@@ -10,6 +10,8 @@ pub(crate) enum FileType {
     RnoteFile,
     /// A note folder, or the entry file of one.
     NoteFolder,
+    /// A note folder packed into one file.
+    PackedNote,
     VectorImageFile,
     BitmapImageFile,
     XoppFile,
@@ -39,6 +41,9 @@ impl FileType {
                         match content_type.as_str() {
                             "application/rnote" => {
                                 return Self::RnoteFile;
+                            }
+                            "application/rnote-packed" => {
+                                return Self::PackedNote;
                             }
                             "image/svg+xml" => {
                                 return Self::VectorImageFile;
@@ -77,6 +82,9 @@ impl FileType {
                 match &*extension_str.to_string_lossy() {
                     "rnote" => {
                         return Self::RnoteFile;
+                    }
+                    ext if ext == NoteFolder::PACKED_EXTENSION => {
+                        return Self::PackedNote;
                     }
                     "svg" => {
                         return Self::VectorImageFile;

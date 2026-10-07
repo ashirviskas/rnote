@@ -1,11 +1,14 @@
 //! The records a note folder is made of, and the batches they are stored in.
 
 // Imports
+use crate::document::background::Background;
+use crate::engine::StrokeContent;
 use crate::store::{ChronoComponent, StrokeId};
 use crate::strokes::Stroke;
 use crate::strokes::vectorimage::PdfPageImage;
 use crate::{Camera, Document};
 use anyhow::Context;
+use p2d::bounding_volume::Aabb;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
@@ -202,9 +205,70 @@ impl WrittenContent {
 ///
 /// It is written out here because it is stored in notes and compared between devices, so it must never change.
 pub(crate) fn content_hash(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
+    let mut hasher = ContentHasher::default();
+    hasher.update(bytes);
+    hasher.0
+}
+
+/// Makes a [content_hash] of what is written into it.
+#[derive(Debug, Clone, Copy)]
+struct ContentHasher(u64);
+
+impl Default for ContentHasher {
+    fn default() -> Self {
+        Self(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+impl ContentHasher {
+    fn update(&mut self, bytes: &[u8]) {
+        self.0 = bytes.iter().fold(self.0, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+    }
+}
+
+impl Write for ContentHasher {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A hash of the strokes with the area and the background they are looked at with, that is the same on every
+/// device that has them.
+///
+/// The image of a Pdf page that knows its page is hashed by that, not by what is drawn of it: every device makes
+/// that from the Pdf, and it does not come out the same twice.
+pub(crate) fn stable_content_hash(content: &StrokeContent) -> anyhow::Result<u64> {
+    #[derive(Serialize)]
+    struct Hashed<'a> {
+        strokes: Vec<StrokeRef<'a>>,
+        bounds: &'a Option<Aabb>,
+        background: &'a Option<Background>,
+    }
+
+    let strokes = content.strokes.iter().map(|stroke| match stroke.as_ref() {
+        Stroke::VectorImage(image) => image
+            .as_pdf_page_image()
+            .map(|page_image| StrokeRef::PdfPage(PdfPageStroke::VectorImage(page_image)))
+            .unwrap_or(StrokeRef::Whole(stroke)),
+        _ => StrokeRef::Whole(stroke),
+    });
+    let mut hasher = ContentHasher::default();
+    serde_json::to_writer(
+        &mut hasher,
+        &Hashed {
+            strokes: strokes.collect(),
+            bounds: &content.bounds,
+            background: &content.background,
+        },
+    )?;
+    Ok(hasher.0)
 }
 
 /// The name of a batch: the device that wrote it and a number that grows with every batch of that device.
