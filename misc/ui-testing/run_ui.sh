@@ -8,6 +8,11 @@
 # - The X11 backend is used, so the window can be captured with shot.sh on a Wayland desktop.
 # - The log goes to tmp/ui-test/log/ui_run.log.
 set -euo pipefail
+# A running Rnote with the same app id would get the files and the clicks instead of the test instance
+if pgrep -x rnote >/dev/null; then
+    echo "Rnote is running already (pid $(pgrep -x rnote | tr '\n' ' ')). Close it first." >&2
+    exit 1
+fi
 cd "$(dirname "$0")/../.."
 dir=tmp/ui-test
 mkdir -p "$dir/schemas" "$dir/log" "${UI_TEST_DATA:-$dir/data}"

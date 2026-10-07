@@ -7,7 +7,7 @@ use adw::prelude::*;
 use anyhow::anyhow;
 use futures::StreamExt;
 use gettextrs::gettext;
-use gtk4::{Builder, Button, FileDialog, FileFilter, Label, ToggleButton, gio, glib, glib::clone};
+use gtk4::{Builder, Button, FileDialog, FileFilter, Label, gio, glib, glib::clone};
 use gtk4::{graphene, gsk};
 use hayro::hayro_syntax;
 use num_traits::ToPrimitive;
@@ -260,12 +260,7 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     let pdf_import_width_row: adw::SpinRow = builder.object("pdf_import_width_row").unwrap();
     let pdf_import_page_spacing_row: adw::ComboRow =
         builder.object("pdf_import_page_spacing_row").unwrap();
-    let pdf_import_as_bitmap_toggle: ToggleButton =
-        builder.object("pdf_import_as_bitmap_toggle").unwrap();
-    let pdf_import_as_vector_toggle: ToggleButton =
-        builder.object("pdf_import_as_vector_toggle").unwrap();
-    let pdf_import_bitmap_scalefactor_row: adw::SpinRow =
-        builder.object("pdf_import_bitmap_scalefactor_row").unwrap();
+    let pdf_import_kept_row: adw::ActionRow = builder.object("pdf_import_kept_row").unwrap();
     let pdf_import_adjust_document_row: adw::SwitchRow =
         builder.object("pdf_import_adjust_document_row").unwrap();
     let import_pdf_button_cancel: Button = builder.object("import_pdf_button_cancel").unwrap();
@@ -288,20 +283,24 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
         .import_prefs
         .pdf_import_prefs;
 
+    // The pages are always vector images that know their page of the Pdf, which the document keeps. Bitmap pages
+    // are not offered any more: their job, drawing cheaply, falls to how Pdf pages are drawn.
+    appwindow
+        .engine_config()
+        .write()
+        .import_prefs
+        .pdf_import_prefs
+        .pages_type = PdfImportPagesType::Vector;
+    if password.is_some() {
+        pdf_import_kept_row.set_title(&gettext("The Pdf Is Not Kept"));
+        pdf_import_kept_row.set_subtitle(&gettext(
+            "A Pdf that needs a password is not kept with the note: its pages could not be drawn from it again without asking for it. The pages are imported as they are drawn now",
+        ));
+    }
+
     // Set the widget state from the pdf import prefs
     pdf_import_width_row.set_value(pdf_import_prefs.page_width_perc);
-    match pdf_import_prefs.pages_type {
-        PdfImportPagesType::Bitmap => {
-            pdf_import_as_bitmap_toggle.set_active(true);
-            pdf_import_bitmap_scalefactor_row.set_sensitive(true);
-        }
-        PdfImportPagesType::Vector => {
-            pdf_import_as_vector_toggle.set_active(true);
-            pdf_import_bitmap_scalefactor_row.set_sensitive(false);
-        }
-    }
     pdf_import_page_spacing_row.set_selected(pdf_import_prefs.page_spacing.to_u32().unwrap());
-    pdf_import_bitmap_scalefactor_row.set_value(pdf_import_prefs.bitmap_scalefactor);
     pdf_import_adjust_document_row.set_active(pdf_import_prefs.adjust_document);
 
     pdf_page_start_row
@@ -314,56 +313,6 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
         .build();
 
     // Update preferences
-    pdf_import_as_vector_toggle.connect_toggled(clone!(
-        #[weak]
-        pdf_import_bitmap_scalefactor_row,
-        #[weak]
-        appwindow,
-        move |toggle| {
-            if !toggle.is_active() {
-                return;
-            }
-            appwindow
-                .engine_config()
-                .write()
-                .import_prefs
-                .pdf_import_prefs
-                .pages_type = PdfImportPagesType::Vector;
-            pdf_import_bitmap_scalefactor_row.set_sensitive(false);
-        }
-    ));
-
-    pdf_import_as_bitmap_toggle.connect_toggled(clone!(
-        #[weak]
-        pdf_import_bitmap_scalefactor_row,
-        #[weak]
-        appwindow,
-        move |toggle| {
-            if !toggle.is_active() {
-                return;
-            }
-            appwindow
-                .engine_config()
-                .write()
-                .import_prefs
-                .pdf_import_prefs
-                .pages_type = PdfImportPagesType::Bitmap;
-            pdf_import_bitmap_scalefactor_row.set_sensitive(true);
-        }
-    ));
-
-    pdf_import_bitmap_scalefactor_row.connect_value_notify(clone!(
-        #[weak]
-        appwindow,
-        move |row| {
-            appwindow
-                .engine_config()
-                .write()
-                .import_prefs
-                .pdf_import_prefs
-                .bitmap_scalefactor = row.value();
-        }
-    ));
 
     pdf_import_page_spacing_row.connect_selected_notify(clone!(
         #[weak]
