@@ -96,6 +96,9 @@ impl RnAppWindow {
         let action_selection_select_all = gio::SimpleAction::new("selection-select-all", None);
         self.add_action(&action_selection_select_all);
         let action_selection_deselect_all = gio::SimpleAction::new("selection-deselect-all", None);
+        let action_selection_select_pdf_pages =
+            gio::SimpleAction::new("selection-select-pdf-pages", None);
+        self.add_action(&action_selection_select_pdf_pages);
         self.add_action(&action_selection_deselect_all);
         let action_clear_doc = gio::SimpleAction::new("clear-doc", None);
         self.add_action(&action_clear_doc);
@@ -556,6 +559,19 @@ impl RnAppWindow {
                     return;
                 };
                 let widget_flags = canvas.engine_mut().select_all_strokes();
+                appwindow.handle_widget_flags(widget_flags, &canvas);
+            }
+        ));
+
+        // select all pages of the Pdfs the selected pages are from
+        action_selection_select_pdf_pages.connect_activate(clone!(
+            #[weak(rename_to=appwindow)]
+            self,
+            move |_, _| {
+                let Some(canvas) = appwindow.active_tab_canvas() else {
+                    return;
+                };
+                let widget_flags = canvas.engine_mut().select_all_pages_of_selected_pdfs();
                 appwindow.handle_widget_flags(widget_flags, &canvas);
             }
         ));

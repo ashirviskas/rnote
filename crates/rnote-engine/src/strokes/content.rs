@@ -18,6 +18,21 @@ pub enum GeneratedContentImages {
 
 pub(crate) const CONTENT_HIGHLIGHT_COLOR: piet::Color = color::GNOME_BLUES[1].with_a8(96);
 
+/// Draws the highlight of a selected image: a tint over the whole image, so that of several pages that lie next to
+/// each other it is seen which ones are selected, and the outline all content gets.
+pub(crate) fn draw_image_highlight(
+    content: &impl Content,
+    cx: &mut impl piet::RenderContext,
+    total_zoom: f64,
+) -> anyhow::Result<()> {
+    const IMAGE_TINT_ALPHA: u8 = 40;
+    cx.fill(
+        content.outline_path(),
+        &CONTENT_HIGHLIGHT_COLOR.with_a8(IMAGE_TINT_ALPHA),
+    );
+    content.draw_highlight_outline(cx, total_zoom)
+}
+
 /// Types that are content.
 pub trait Content: Drawable + Shapeable
 where
@@ -71,6 +86,15 @@ where
     ///
     /// `total_zoom` is the zoom-factor of the surface that the highlight gets drawn on.
     fn draw_highlight(
+        &self,
+        cx: &mut impl piet::RenderContext,
+        total_zoom: f64,
+    ) -> anyhow::Result<()> {
+        self.draw_highlight_outline(cx, total_zoom)
+    }
+
+    /// Draws the outline of the content as the highlight of a selected stroke.
+    fn draw_highlight_outline(
         &self,
         cx: &mut impl piet::RenderContext,
         total_zoom: f64,

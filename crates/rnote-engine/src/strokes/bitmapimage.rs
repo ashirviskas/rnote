@@ -48,6 +48,14 @@ impl Default for BitmapImage {
 }
 
 impl Content for BitmapImage {
+    fn draw_highlight(
+        &self,
+        cx: &mut impl piet::RenderContext,
+        total_zoom: f64,
+    ) -> anyhow::Result<()> {
+        super::content::draw_image_highlight(self, cx, total_zoom)
+    }
+
     fn update_geometry(&mut self) {}
 }
 
