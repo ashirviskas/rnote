@@ -6,17 +6,20 @@
 
 // Imports
 use crate::notefolder::FileName;
+use crate::pens::PenStyle;
+use crate::store::StrokeKey;
 use crate::strokes::Stroke;
 use crate::strokes::vectorimage::PdfPageRef;
-use crate::{Drawable, Engine};
+use crate::{Drawable, Engine, WidgetFlags};
 use anyhow::Context;
 use futures::channel::oneshot;
 use hayro::hayro_syntax::Pdf;
 use hayro_write::{ExtractionQuery, ExtractionResult, extract};
 use pdf_writer::{Content, Finish, Name, Rect, Ref};
 use rnote_compose::shapes::{Rectangle, Shapeable};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::error;
 
 /// What is exported of the pages of the Pdfs a document keeps.
@@ -26,6 +29,15 @@ pub enum PdfPagesExport {
     Original,
     /// The pages with what is drawn over them in the document.
     WithNotes,
+}
+
+/// Which pages of kept Pdfs an export takes, and how many.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PdfPagesScope {
+    /// The selected pages.
+    Selected(usize),
+    /// All pages of the document, because no page is selected.
+    All(usize),
 }
 
 /// A page of a kept Pdf as it lies on the document, with what is drawn over it.
@@ -52,7 +64,7 @@ impl Engine {
                 .map(|pdf_page| (pdf_page, image.rectangle)),
             _ => None,
         };
-        let pages_among = |keys: Vec<crate::store::StrokeKey>| {
+        let pages_among = |keys: Vec<StrokeKey>| {
             keys.into_iter()
                 .filter_map(|key| kept_page(self.store.get_stroke_ref(key)?))
                 .filter(|(pdf_page, _)| of.is_none_or(|file| pdf_page.file == *file))
@@ -85,6 +97,60 @@ impl Engine {
                 }
             })
             .collect()
+    }
+
+    /// Selects all pages of the Pdfs that the selected pages are from. Nothing changes when no page is selected.
+    pub fn select_all_pages_of_selected_pdfs(&mut self) -> WidgetFlags {
+        let pages = self.pages_of_selected_pdfs();
+        if pages.is_empty() {
+            return WidgetFlags::default();
+        }
+        let widget_flags = self.change_pen_style(PenStyle::Selector);
+        self.store.set_selected_keys(&pages, true);
+        widget_flags
+            | self.current_pen_update_state()
+            | self.record(Instant::now())
+            | self.update_rendering_current_viewport()
+    }
+
+    /// All pages of the Pdfs that the selected pages are from.
+    fn pages_of_selected_pdfs(&self) -> Vec<StrokeKey> {
+        let file_of = |key| match self.store.get_stroke_ref(key)? {
+            Stroke::VectorImage(image) => image.pdf_page.as_ref().map(|page| page.file.clone()),
+            _ => None,
+        };
+        let files = self
+            .store
+            .selection_keys_as_rendered()
+            .into_iter()
+            .filter_map(file_of)
+            .collect::<HashSet<FileName>>();
+        self.store
+            .stroke_keys_as_rendered()
+            .into_iter()
+            .filter(|&key| file_of(key).is_some_and(|file| files.contains(&file)))
+            .collect()
+    }
+
+    /// Which pages [Self::export_pdf_pages] takes.
+    pub fn pdf_pages_scope(&self) -> PdfPagesScope {
+        let is_page = |key| {
+            matches!(
+                self.store.get_stroke_ref(key),
+                Some(Stroke::VectorImage(image)) if image.pdf_page.is_some()
+            )
+        };
+        let selected = self
+            .store
+            .selection_keys_as_rendered()
+            .into_iter()
+            .filter(|&key| is_page(key))
+            .count();
+        if selected > 0 {
+            return PdfPagesScope::Selected(selected);
+        }
+        let all = self.store.stroke_keys_as_rendered();
+        PdfPagesScope::All(all.into_iter().filter(|&key| is_page(key)).count())
     }
 
     /// The Pdfs whose pages [Self::export_pdf_pages] takes, in the order their first pages lie on the document.
@@ -448,7 +514,9 @@ mod tests {
         let mut engine = Engine::default();
         import(&mut engine, &pdf, Vector2::ZERO);
 
+        assert_eq!(engine.pdf_pages_scope(), PdfPagesScope::All(3));
         select_pages(&mut engine, &[2, 0]);
+        assert_eq!(engine.pdf_pages_scope(), PdfPagesScope::Selected(2));
         let exported = export(&engine, PdfPagesExport::Original, None);
         assert_ne!(exported, pdf);
         assert_eq!(page_texts(&exported), ["one", "three"]);
@@ -472,6 +540,29 @@ mod tests {
         assert_eq!(
             export(&engine, PdfPagesExport::Original, Some(&files[1])),
             second
+        );
+    }
+
+    #[test]
+    fn one_selected_page_leads_to_all_pages_of_its_pdf() {
+        let (first, second) = (pdf_with_pages(&["one", "two"]), pdf_with_pages(&["other"]));
+        let mut engine = Engine::default();
+        import(&mut engine, &first, Vector2::ZERO);
+        import(&mut engine, &second, Vector2::new(0.0, 5000.0));
+
+        // Nothing selected: nothing to select, and an export takes everything
+        assert!(engine.pages_of_selected_pdfs().is_empty());
+        assert_eq!(engine.placed_pdf_pages(None).len(), 3);
+
+        // Not through `select_all_pages_of_selected_pdfs()`: it starts rendering in the background
+        select_pages(&mut engine, &[1]);
+        assert_eq!(engine.placed_pdf_pages(None).len(), 1);
+        let pages = engine.pages_of_selected_pdfs();
+        engine.store.set_selected_keys(&pages, true);
+        assert_eq!(engine.store.selection_keys_unordered().len(), 2);
+        assert_eq!(
+            page_texts(&export(&engine, PdfPagesExport::Original, None)),
+            ["one", "two"]
         );
     }
 

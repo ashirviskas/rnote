@@ -15,7 +15,7 @@ pub use config::EngineConfig;
 pub use config::EngineConfigShared;
 pub use export::ExportPrefs;
 pub use import::ImportPrefs;
-pub use pdfpages::PdfPagesExport;
+pub use pdfpages::{PdfPagesExport, PdfPagesScope};
 pub use snapshot::EngineSnapshot;
 pub use strokecontent::StrokeContent;
 

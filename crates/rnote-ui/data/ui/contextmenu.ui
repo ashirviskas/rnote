@@ -18,6 +18,12 @@
             <attribute name="label" translatable="yes">_Paste</attribute>
             <attribute name="action">win.clipboard-paste-contextmenu</attribute>
           </item>
+          <section>
+            <item>
+              <attribute name="label" translatable="yes">Select All Pages of This P_df</attribute>
+              <attribute name="action">win.selection-select-pdf-pages</attribute>
+            </item>
+          </section>
         </menu>
       </object>
     </child>

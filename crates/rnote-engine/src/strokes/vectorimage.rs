@@ -96,6 +96,14 @@ struct NormalizedSvg {
 }
 
 impl Content for VectorImage {
+    fn draw_highlight(
+        &self,
+        cx: &mut impl piet::RenderContext,
+        total_zoom: f64,
+    ) -> anyhow::Result<()> {
+        super::content::draw_image_highlight(self, cx, total_zoom)
+    }
+
     fn gen_svg(&self) -> Result<Svg, anyhow::Error> {
         let svg_root = svg::node::element::SVG::new()
             .set("x", -self.rectangle.cuboid.half_extents[0])

@@ -10,11 +10,11 @@ use gtk4::{Builder, Button, FileDialog, FileFilter, Label, gio, glib, glib::clon
 use num_traits::ToPrimitive;
 use rnote_compose::SplitOrder;
 use rnote_engine::document::Layout;
-use rnote_engine::engine::PdfPagesExport;
 use rnote_engine::engine::export::{
     DocExportFormat, DocExportPrefs, DocPagesExportFormat, DocPagesExportPrefs,
     SelectionExportFormat, SelectionExportPrefs,
 };
+use rnote_engine::engine::{PdfPagesExport, PdfPagesScope};
 use rnote_engine::notefolder::{Device, FileName, NoteFolder};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -216,8 +216,16 @@ pub(crate) async fn dialog_export_pdf_pages(
     filter.set_name(Some(&gettext("Pdf")));
     let filter_list = gio::ListStore::new::<FileFilter>();
     filter_list.append(&filter);
+    // The dialog says what it exports: the selected pages, or all when none is selected
+    let title = match canvas.engine_ref().pdf_pages_scope() {
+        PdfPagesScope::Selected(1) => gettext("Export the Selected Pdf Page"),
+        PdfPagesScope::Selected(n) => {
+            gettext("Export the {} Selected Pdf Pages").replace("{}", &n.to_string())
+        }
+        PdfPagesScope::All(n) => gettext("Export All {} Pdf Pages").replace("{}", &n.to_string()),
+    };
     let filedialog = FileDialog::builder()
-        .title(gettext("Export Pdf Pages"))
+        .title(title)
         .modal(true)
         .accept_label(gettext("Export"))
         .filters(&filter_list)
