@@ -11,7 +11,8 @@ use gtk4::{gio, glib, prelude::*};
 use notify::EventKind;
 use notify::event::{AccessKind, AccessMode};
 use notify_debouncer_full::notify;
-use rnote_engine::notefolder::NoteFolder;
+use rnote_engine::notefolder::{Device, NoteFolder, PageCache};
+use rnote_engine::strokes::vectorimage::PdfPageDrawing;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -40,6 +41,33 @@ fn app_settings() -> Option<gio::Settings> {
 pub(crate) fn dir() -> Option<PathBuf> {
     let dir = app_settings()?.string("library-dir");
     (!dir.is_empty()).then(|| PathBuf::from(dir.as_str()))
+}
+
+/// This device as note folders are opened with it: its page cache and how it draws Pdf pages are set in the
+/// "Performance" settings.
+pub(crate) fn device() -> anyhow::Result<Device> {
+    let device = Device::this()?;
+    let Some(app_settings) = app_settings() else {
+        return Ok(device);
+    };
+    let page_cache = PageCache {
+        limit: u64::from(app_settings.uint("page-cache-size")) * 1024 * 1024,
+        ..device.page_cache
+    };
+    Ok(Device {
+        page_cache,
+        pdf_pages: pdf_pages(),
+        ..device
+    })
+}
+
+/// How Pdf pages are drawn, as the "Performance" settings have it.
+pub(crate) fn pdf_pages() -> PdfPageDrawing {
+    if app_settings().is_some_and(|settings| settings.boolean("pdf-pages-from-pdf")) {
+        PdfPageDrawing::FromPdf
+    } else {
+        PdfPageDrawing::Converted
+    }
 }
 
 /// Makes the folder the library. `None` leaves the app without one.

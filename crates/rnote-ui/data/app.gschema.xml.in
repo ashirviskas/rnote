@@ -138,6 +138,14 @@
       <default>"all"</default>
       <summary>Where the search in the notes looks</summary>
     </key>
+    <key name="pdf-pages-from-pdf" type="b">
+      <default>false</default>
+      <summary>Whether Pdf pages kept with a note are drawn straight from the Pdf instead of being converted and cached</summary>
+    </key>
+    <key name="page-cache-size" type="u">
+      <default>1024</default>
+      <summary>The size in MB the cache of converted Pdf pages is kept to</summary>
+    </key>
     <key name="search-zhuyin" type="b">
       <default>false</default>
       <summary>Whether zhuyin is read when notes are indexed for search (experimental)</summary>

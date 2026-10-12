@@ -440,7 +440,8 @@ mod tests {
 
     /// Imports the Pdf at the position, as the app does. No page is selected afterwards.
     fn import(engine: &mut Engine, pdf: &[u8], pos: Vector2) {
-        let pages = engine.generate_pdf_pages_from_bytes(pdf.to_vec(), pos, None, None);
+        let pages =
+            engine.generate_pdf_pages_from_bytes(pdf.to_vec(), pos, None, None, Default::default());
         let pages = futures::executor::block_on(pages).unwrap().unwrap();
         // Not through `import_generated_content()`: it starts rendering in the background, which would still
         // run when the test process ends

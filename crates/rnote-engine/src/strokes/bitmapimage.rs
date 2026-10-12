@@ -6,6 +6,7 @@ use crate::Drawable;
 use crate::Image;
 use crate::document::Format;
 use crate::engine::import::{PdfImportPageSpacing, PdfImportPrefs};
+use crate::notefolder::FileName;
 use anyhow::anyhow;
 use hayro::{hayro_interpret, hayro_syntax, vello_cpu};
 use kurbo::Shape;
@@ -35,6 +36,26 @@ pub struct BitmapImage {
     /// The text the image carries, when it was imported from a Pdf page with a text layer.
     #[serde(rename = "text_lines", skip_serializing_if = "Vec::is_empty")]
     pub text_lines: Vec<ImageTextLine>,
+    /// The file the picture was imported from, when the document keeps it. The image can be decoded from it
+    /// again.
+    #[serde(rename = "file", skip_serializing_if = "Option::is_none")]
+    pub file: Option<FileName>,
+}
+
+/// The [BitmapImage] of a picture as it is written into a note folder that holds its file: without its pixels,
+/// which are decoded from the file. Read back, it is a [BitmapImage] whose image is empty.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename = "bitmapimage")]
+pub(crate) struct PictureImage<'a> {
+    #[serde(rename = "rectangle")]
+    rectangle: &'a Rectangle,
+    #[serde(
+        rename = "text_lines",
+        skip_serializing_if = "<[ImageTextLine]>::is_empty"
+    )]
+    text_lines: &'a [ImageTextLine],
+    #[serde(rename = "file")]
+    pub(crate) file: &'a FileName,
 }
 
 impl Default for BitmapImage {
@@ -43,6 +64,7 @@ impl Default for BitmapImage {
             image: Image::default(),
             rectangle: Rectangle::default(),
             text_lines: Vec::new(),
+            file: None,
         }
     }
 }
@@ -113,6 +135,15 @@ impl Transformable for BitmapImage {
 }
 
 impl BitmapImage {
+    /// The image as it is written into a note folder that holds its file.
+    pub(crate) fn as_picture_image(&self) -> Option<PictureImage<'_>> {
+        Some(PictureImage {
+            rectangle: &self.rectangle,
+            text_lines: &self.text_lines,
+            file: self.file.as_ref()?,
+        })
+    }
+
     pub fn from_image_bytes(
         bytes: &[u8],
         pos: Vector2,
@@ -140,6 +171,7 @@ impl BitmapImage {
             image,
             rectangle,
             text_lines: Vec::new(),
+            file: None,
         })
     }
 

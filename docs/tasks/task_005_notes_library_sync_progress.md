@@ -1,6 +1,6 @@
 # TASK-005: Notes library, sync and a sync-friendly note format — progress
 
-Status: **Phase 1 (library) done and committed. Phase 2 (note format) mostly done (2026-10-07); folders that expand in place and note previews added 2026-10-12 and committed. What is left is in "TODO: what is left".** Implemented and checked: note folders with merging between devices, original Pdfs kept, Pdf export (original, with notes), packed notes, recognised text synced with the note, file types registered on Linux. Builds; `cargo fmt --all --check`, both clippy runs and the tests (39 in `rnote-engine`, 19 in `rnote-ocr`) are clean. Still open: pictures as original files, the "Performance" setting (drawing straight from the Pdf, cache size), the Windows installer. See "Phase 2: progress".
+Status: **Done (2026-10-12).** Phase 1 (library) and phase 2 (note format) are built and checked, including the five items that were left: pictures as original files, merging another device's batches without a reload, tidy on close, the Windows installer (untried, no Windows here) and the "Performance" settings. Also new: test hooks in dev builds (`crates/rnote-ui/src/testhooks.rs`, `crates/rnote-ui/README.md`). `cargo fmt --all --check`, both clippy runs and the tests (44 in `rnote-engine`, 19 in `rnote-ocr`) are clean. What was done on the last day is in "The rest, finished (2026-10-12)".
 
 ## Full initial request (verbatim)
 
@@ -418,12 +418,12 @@ Phase 2, note format (state in "Phase 2: progress"):
 | 2 | Engine: stroke ids, records, batches, load (merge), save (changed strokes), tidy, entry file; 22 tests | Done |
 | 5 | `rnote-cli`: `convert`, `pack`, `unpack`, `pdf-pages`; note folders in `index`, `search`, `export`, `thumbnail`, `test`, `import` | Done |
 | 5b | Packed notes (`.rnotez`): engine, cli, "Export Packed Note", opening one unpacks it; 1 test | Done |
-| 7 | App: open, save, Save As, browser rows, library watcher, merge of what other devices wrote while the note is open | Done (export switch, packed note, note actions, "Performance" group open) |
+| 7 | App: open, save, Save As, browser rows, library watcher, merge of what other devices wrote while the note is open, "Performance" group | Done |
 | 3a | `files/`: the original Pdf, page records without page data, page cache with limit; 6 tests | Done |
-| 3b | Pictures as original files; drawing straight from the Pdf and the "Performance" group (route, cache size) | Open |
+| 3b | Pictures as original files; drawing straight from the Pdf and the "Performance" group (route, cache size) | Done |
 | 4 | Pdf export, original and with notes on top: engine, `rnote-cli pdf-pages`, two entries in the app's export menu; 5 tests | Done |
 | 6 | Device-independent unit hash, `text/` files written and read by `rnote-cli index`; 3 tests | Done |
-| 8 | Registration of `.rnoted` and `.rnotez`: mime types, desktop file, thumbnailer | Done for Linux, not installed and tried. Windows installer open |
+| 8 | Registration of `.rnoted` and `.rnotez`: mime types, desktop file, thumbnailer, Windows installer | Done; Linux not installed and tried, Windows not tried |
 
 A Pdf that is imported into a document is kept in memory as it was (`Engine::files`) and written into `files/` when the document is saved as a note folder. Its pages are then saved as "this Pdf, this page", without what is drawn of them. A page whose Pdf is not at hand (a note converted from a `.rnote` file, a Pdf with a password) is saved whole, as in a single-file note.
 
@@ -476,13 +476,13 @@ The device id is a random 8 character id in `<data dir>/rnote/device-id`, made w
 ### How it behaves
 
 - **Save As** decides by the name: one that ends in `.rnoted` gives a note folder, any other a single file. In the library the suggested name ends in `.rnoted`, elsewhere in `.rnote`. Saving an existing `.rnote` note as `.rnoted` is the conversion on demand; `rnote-cli convert` does it without the app.
-- **While a note folder is open** its `ink/` directory is watched. When batches of another device appear, the app waits until no stroke is being drawn, saves (which only adds a batch), loads the note again and shows "Changes from another device were added". The undo history starts anew at that point.
-- **Tidying** runs when a note folder is loaded. On closing it does not run yet.
+- **While a note folder is open** its `ink/` directory is watched. When batches of another device appear, the app waits until no stroke is being drawn, saves (which only adds a batch), reads the news and applies them to the open document, and shows "Changes from another device were added". The view, the selection of untouched strokes and the undo history stay (see "The rest, finished").
+- **Tidying** runs when a note folder is loaded, when its tab is closed and when the app quits.
 - The search index knows a note folder by the path of the folder. Whether it changed is told by its `ink/` directory.
 - **A Pdf page whose Pdf has not arrived yet** (a sync tool brought the batches first) is loaded as an empty page that still knows its Pdf and page. It is drawn once the note is loaded again with the Pdf there. Nothing loads it again by itself yet.
 - **A Pdf with a password** is not kept: its pages are saved whole.
 - **The import dialog** no longer offers "Vector or Bitmap". Every Pdf page is a vector page that knows its page of the Pdf, and a row says that the Pdf is kept with the note and can be exported again (or, for a Pdf with a password, that it is not kept). Bitmap pages had one job, drawing cheaply; that falls to how Pdf pages are drawn (the "Performance" setting, open). The engine and the cli still know bitmap pages.
-- **In memory nothing changed yet:** what is drawn of every page is held as before (the textbook note takes 559 MB in the app). Reading it from the cache only when a page is drawn belongs to step 3b.
+- **In memory**, with pages converted (the default), what is drawn of every page is held as before. With "Draw Pdf Pages From the Pdf" only the Pdf is held, see "The rest, finished".
 - **Taking the Pdf out** is copying it from `files/`, or "Export Original Pdf Pages".
 - **Export of Pdf pages** (menu → Export): the selected pages of kept Pdfs, or all when none is selected, in the order they lie on the document (top to bottom, left to right). Every exported page has the size of its Pdf page.
   - "Original": all pages of one Pdf in their order give that Pdf byte for byte; anything else is lifted out page by page, not drawn again. For pages of several Pdfs the app asks: one Pdf, or one for each (the chosen name with ` - 1`, ` - 2`).
@@ -605,6 +605,55 @@ Not tried: a picture arriving by sync from another device (the watcher is the sa
 
 The README has a section "Notes Library and Note Folders (this fork)" with the screenshot `crates/rnote-ui/data/screenshots/library.png` (the demo library `tmp/t011/Library`, converted from the notes in `misc/screenshots-pages/` with `rnote-cli convert`, plus a Pdf in a nested folder; window 1440 × 860, the sidebar folds away below about 1300 px). The fork's features are also listed at the top of the README, above upstream's list.
 
+### The rest, finished (2026-10-12)
+
+> See docs/tasks/task_005 and please complete it, do it elegantly and KISS where possible. Add perf options
+
+> Can we please have hooks to make screenshots and shit somewhere in code that build with dev? In an elegant manner?
+
+> And please note how to use hooks somewhere, maybe in README in some crate
+
+**Pictures as original files.** `BitmapImage::file` names the file a picture came from; the engine keeps the bytes in `Engine::files` at import (`generate_bitmapimage_from_bytes`, the ending from `image::guess_format`). The record form of a stroke whose data is made from a file is now one type for both kinds, `LeanStroke` (`notefolder/record.rs`): a Pdf page without `svg_data`, a picture without its pixels (`PictureImage` in `strokes/bitmapimage.rs`). `NoteFolder::save` takes the lean form when the note holds the file; loading decodes pictures from `files/` in parallel (`fill_pictures`). A picture whose file is not at hand (from a `.rnote`) is saved whole. `EngineSnapshot::referenced_files` (Pdfs and pictures) is what packing and the packed-note export take. Saving into another note folder (Save As) now loads the Pdfs and pictures of the open one first, so they go along instead of being written whole.
+
+**News without a reload.** `NoteFolder::read_news(&files) -> News` reads the unread batches and returns what is newer than what this device knows (`Known` now keeps the `Stamp`): added or changed strokes, removed ids, the document. `load` is the same call on a note nothing of which was read yet, so loading and merging share one rule. `StrokeStore::apply_note_news` applies the news by stroke id to every entry of the history and to the live state; a changed stroke is taken out and put in again. Undo therefore never takes out what another device did, and a save after an undo cannot write removals of it. `Engine::apply_note_news` keeps the camera. The canvas saves first, then reads and applies (`merge_note_folder_news`).
+
+```mermaid
+graph TD
+    W[ink/ watcher: unread batch] --> I[wait: pen idle, no save running]
+    I --> S[save: own changes become a batch, stamps known]
+    S --> R[NoteFolder::read_news: newer stamp than known]
+    R --> A[StrokeStore::apply_note_news: every history entry + live state, by stroke id]
+    A --> D[render the strokes put in; view and undo stay]
+```
+
+Before: save, `reload_from_disk`, history and view lost, every page rendered again.
+
+**Tidy on close.** `RnCanvas::tidy_note_folder_on_close`: called when a tab is closed (after the unsaved-changes question) and for every tab in `close_force`. A save that runs holds the note folder, so tidying can not run during one.
+
+**Windows installer.** `build-aux/rnote_inno.iss.in`: ProgIds for `.rnotez` and for `.rnoted` (the entry file `note.rnoted`, Windows has no association for folders), and `SupportedTypes` lists the three endings (upstream had a placeholder `.myp`). Not tried, there is no Windows here.
+
+**Performance settings.** "Settings → Performance": "Draw Pdf Pages From the Pdf" (key `pdf-pages-from-pdf`, off by default, as decided) and "Page Cache Size (MB)" (`page-cache-size`, 1024). They apply to notes opened afterwards. `library::device()` builds the `Device` from them; `Device::pdf_pages` is a `PdfPageDrawing` (`Converted`, `FromPdf`). With `FromPdf` a page holds the parsed Pdf (`VectorImage::pdf`, an `Arc`, one per Pdf) and no `svg_data`: `draw` renders the page with `hayro` at the needed scale (the canvas), `gen_svg` converts it when asked (exports, thumbnails), so no other path changed. Import skips the conversion. Loading puts the Pdf among the snapshot's files (no extra memory: the same `Arc`), so exports and Save As have it. The cli keeps converting.
+
+**Test hooks (dev builds only).** `crates/rnote-ui/src/testhooks.rs`, compiled with `debug_assertions` only: with `RNOTE_TEST_COMMANDS=<file>` the app runs `open PATH`, `action NAME`, `screenshot PATH` from that file. The screenshot is drawn by GTK itself, so it works on Wayland. `misc/ui-testing/run_ui.sh` sets the variable, `misc/ui-testing/cmd.sh` sends commands and waits until they are read. Usage in `crates/rnote-ui/README.md`.
+
+Checked:
+
+| Case | Result |
+|---|---|
+| Engine tests (5 new, 44 in all) | A picture is kept byte for byte, its batch is under 2 KB with a 100 KB Png, it loads on another device, a move rewrites a small record, packing keeps it; without its file it is saved whole; pages drawn from the Pdf need no cache, have the Pdf among the files, render and give an Svg; the news of another device (add, change, remove) applied to an open engine give what a fresh load gives, and undo then takes out the user's stroke only |
+| App, `tmp/t005/scenario_news.sh`: A opens a note folder, imports a picture, saves | Batch of 324 bytes; the 94 KB Png in `files/` once |
+| A imports a second picture without saving; B (cli) replaces the page with a scan | Within 8 s, no reload: the document has B's page and A's unsaved picture, selected as it was (`tmp/t005/shot_news.png`) |
+| A undoes, saves | The second picture is gone, B's page stays; one batch of 130 bytes |
+| A closes the tab | Log: "Tidied ... on close", 3 batches of A became 1 |
+| Textbook note opened, pages converted / drawn from the Pdf (`tmp/t005/scenario_perf.sh`) | Memory +205 MB / +85 MB; pages sharp at 2× zoom (`tmp/t005/shot_perf_true.png`) |
+| Page cache size 50 MB, cache emptied, textbook opened | Cache 51 MB, 69 of 112 pages, the oldest dropped |
+| Settings panel | The Performance group with its switch (AT-SPI dump); spin rows have no name in AT-SPI, the cache size was checked by its effect |
+| `cmd.sh` with `run_ui.sh` | Screenshot written; an unknown action logs an error |
+
+Found on the way: the test launchers copy the settings schema from `_mesonbuild/`, which is generated by meson; with a new key and the old schema the app aborts at start. Regenerate it (`meson compile -C _mesonbuild`, or as done here, substitute `@APP_ID@` and `@APP_IDPATH@` in `app.gschema.xml.in` into `_mesonbuild/crates/rnote-ui/data/com.github.flxzt.rnote.Devel.gschema.xml`).
+
+Not tried: a packed note with a picture opened in the app (the engine test covers pack and load), the "Export Packed Note" dialog, the Windows installer, the release build without the hooks (the module and its one call are behind `cfg(debug_assertions)`).
+
 ## Phase 1: result
 
 ### Where things are
@@ -709,21 +758,24 @@ Written for the MR; kept here so it can be updated when the open points are done
 > ### Also in here
 >
 > - Deselecting no longer reorders untouched strokes (`store/selection_comp.rs`); before, every save of a note folder rewrote everything after a selection.
-> - `.rnoted` and `.rnotez` registered on Linux (mime types, desktop file, thumbnailer).
+> - `.rnoted` and `.rnotez` registered on Linux (mime types, desktop file, thumbnailer) and in the Windows installer.
 > - New dependencies: `hayro-write` (git), `pdf-writer`, `zip`.
+>
+> - **Pictures** are kept as the file they were imported from; the note refers to it, so moving one saves a few hundred bytes.
+> - **Settings → Performance**: draw Pdf pages straight from the Pdf (85 MB instead of 205 MB for the textbook, import without conversion), or keep the page cache at a chosen size.
+> - Batches of another device are **applied to the open note** in place: view and undo history stay, undo only undoes this device's changes. Note folders are tidied when opened and when closed.
+> - **Test hooks** in dev builds only: `RNOTE_TEST_COMMANDS` file with `open`, `action`, `screenshot` (`crates/rnote-ui/README.md`, `misc/ui-testing/cmd.sh`).
 >
 > ### Not done
 >
-> - Pictures as original files; "Performance" setting (draw straight from the Pdf, cache size limit).
-> - Windows installer registration of the new types.
-> - Tidying on close; merging another device's batches without reloading (the undo history is lost at the reload).
 > - Workspace entries are not synced.
+> - The Windows installer registers `.rnoted` and `.rnotez` but was not tried.
 >
-> Checked: `cargo fmt`, both clippy runs, 40 engine and 19 ocr tests, and the scenarios in the task doc.
+> Checked: `cargo fmt`, both clippy runs, 44 engine and 19 ocr tests, and the scenarios in the task doc.
 
 ## TODO: what is left, for the next session (written 2026-10-12)
 
-The user wants these finished. Read "Read first" and "Where things are" above, then `crates/rnote-engine/src/notefolder/mod.rs` (the module comment explains the folder) before starting. Build and check as in the memory notes: `export CARGO_HOME=$PWD/_mesonbuild/cargo-home; T="--manifest-path Cargo.toml --target-dir _mesonbuild/target"`, then `cargo build -j 1 $T -p rnote` and `-p rnote-cli` (one package per call, `-j 1`, 2 to 5 minutes each), `cargo test -j 1 $T -p rnote-engine --lib`, `cargo test -j 1 $T -p rnote-ocr`, `cargo clippy -j 1 $T -p rnote -p rnote-cli`, `cargo clippy -j 1 $T -p rnote-engine -p rnote-ocr --all-targets --features rnote-ocr/recognize`, `cargo fmt --all --check`. Before any UI test, `pgrep -x rnote` must find nothing (the user's own build shares the app id). The test launcher is `tmp/t005/run.sh` (settings in a keyfile, library set with `printf "[com/github/flxzt/rnote]\nlibrary-dir='%s'\n" DIR > tmp/t005/config/glib-2.0/settings/keyfile`), rows are driven with `tmp/t011/expand.py NAME`, `tmp/t011/act.py NAME filerow.open-file`, buttons with `misc/ui-testing/atspi.py click button "Save Document"`, screenshots with `misc/ui-testing/shot.sh`. Suggested order: 1, 2, 3, then 4 and 5. Update the "Phase 2: progress" table, the MR text above and the README's "This fork" list as each lands. Do not run `git commit`; print a `Suggested commit` block.
+**All five done on 2026-10-12**, see "The rest, finished". Kept as the plan they were built from. The user wanted these finished. Read "Read first" and "Where things are" above, then `crates/rnote-engine/src/notefolder/mod.rs` (the module comment explains the folder) before starting. Build and check as in the memory notes: `export CARGO_HOME=$PWD/_mesonbuild/cargo-home; T="--manifest-path Cargo.toml --target-dir _mesonbuild/target"`, then `cargo build -j 1 $T -p rnote` and `-p rnote-cli` (one package per call, `-j 1`, 2 to 5 minutes each), `cargo test -j 1 $T -p rnote-engine --lib`, `cargo test -j 1 $T -p rnote-ocr`, `cargo clippy -j 1 $T -p rnote -p rnote-cli`, `cargo clippy -j 1 $T -p rnote-engine -p rnote-ocr --all-targets --features rnote-ocr/recognize`, `cargo fmt --all --check`. Before any UI test, `pgrep -x rnote` must find nothing (the user's own build shares the app id). The test launcher is `tmp/t005/run.sh` (settings in a keyfile, library set with `printf "[com/github/flxzt/rnote]\nlibrary-dir='%s'\n" DIR > tmp/t005/config/glib-2.0/settings/keyfile`), rows are driven with `tmp/t011/expand.py NAME`, `tmp/t011/act.py NAME filerow.open-file`, buttons with `misc/ui-testing/atspi.py click button "Save Document"`, screenshots with `misc/ui-testing/shot.sh`. Suggested order: 1, 2, 3, then 4 and 5. Update the "Phase 2: progress" table, the MR text above and the README's "This fork" list as each lands. Do not run `git commit`; print a `Suggested commit` block.
 
 ### 1. Pictures as original files
 
@@ -784,12 +836,11 @@ Syncing workspace entries (the pinned library makes it unnecessary, see "Phase 1
 ## Open points
 
 - Whether workspace entries should sync after all (see "Phase 1: differences from the plan").
-- Pictures as original files (same mechanism as the Pdf), and the "Performance" setting: drawing straight from the Pdf without the SVG in memory, and the cache size. Drawing straight from the Pdf needs the parsed Pdf kept in memory per note (parsing the textbook takes 0.3 to 1 s) and its own paths for export.
-- The Windows installer registers `.rnote` only.
-- Tidying on close, and bringing in other devices' batches without a reload (the undo history is lost at the reload).
+- The Windows installer entries are untried.
+- A page drawn from the Pdf is rendered again at every zoom step; a large page at high zoom takes up to a second or so (hayro, debug build). Whether that is good enough is for the user to see.
 
 - What survives when pages are lifted out of a Pdf with `hayro-write` (links, form fields, bookmarks).
-- The size limit of the page cache (first guess 1 GB).
+- The size limit of the page cache (default 1 GB, now a setting).
 - The drawing times are from a development build and one book. A release build and other Pdfs may shift them.
 - Batch size and the "quarter dead" threshold are first guesses, to be tuned on real notes.
 - How each sync client treats many small files and folder renames.

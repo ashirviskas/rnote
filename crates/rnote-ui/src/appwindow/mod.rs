@@ -288,6 +288,9 @@ impl RnAppWindow {
             }
         }
 
+        #[cfg(debug_assertions)]
+        crate::testhooks::install(self);
+
         // An initial tab (canvas).
         if add_initial_tab {
             self.add_initial_tab();
@@ -321,6 +324,7 @@ impl RnAppWindow {
             .map(|p| p.child().downcast::<RnCanvasWrapper>().unwrap())
         {
             let _ = tab.canvas().engine_mut().set_active(false);
+            tab.canvas().tidy_note_folder_on_close();
             tab.canvas()
                 .engine_ref()
                 .engine_tasks_tx()

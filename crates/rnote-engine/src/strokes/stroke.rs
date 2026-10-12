@@ -452,6 +452,7 @@ impl Stroke {
             image,
             rectangle,
             text_lines: Vec::new(),
+            file: None,
         }))
     }
 

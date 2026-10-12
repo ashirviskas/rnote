@@ -29,7 +29,11 @@ Written in Rust and GTK4.
 - Imported Pdfs are kept unchanged instead of being converted page by page: a note with a textbook in it is
   little more than the Pdf (a 50 MB note became 35 MB), a save syncs kilobytes, and the Pdf can be exported again,
   as it was or with the notes on top
+- Pictures are kept as the files they were imported from: moving one saves a few hundred bytes, not its pixels
 - A picture of every note's first page in the files list and in file managers
+- Changes from another device appear in an open note in place: the view and the undo history stay
+- "Performance" settings: draw Pdf pages straight from the Pdf (less than half the memory) or from a cache of
+  converted pages whose size is set
 - Note folders (`.rnoted`): a note is a folder of small files, so a sync tool moves only what changed and two
   devices editing the same note merge without conflicts
 - Packed notes (`.rnotez`): one file to send, with the original Pdfs and the preview in it, and no bigger than they
@@ -168,7 +172,9 @@ Dropbox, Syncthing, rclone, ...). Nothing in the app talks to a cloud.
   only what changed, and two devices never write the same file: every save appends a batch of the strokes that
   changed, each device writes its own batches, and the note is the newest version of every stroke. Two devices can
   edit the same note while offline; what the other device changed is merged in when the folder arrives, without a
-  "conflicted copy". Batches that only hold what was overwritten are cleaned up over time. Existing `.rnote` files
+  "conflicted copy". In a note that is open, the other device's changes appear where they are, and undo only undoes
+  what was done on this device. Batches that only hold what was overwritten are cleaned up when a note is opened
+  and closed. Existing `.rnote` files
   open as before and become note folders with "Save As", or `rnote-cli convert`.
 - **Pdfs are kept as they are**: a Pdf imported into a note folder is stored once, unchanged, and its pages refer to
   it instead of each page being converted into a drawing. That is much smaller: a 112 page textbook of 36 MB gave a
@@ -176,7 +182,11 @@ Dropbox, Syncthing, rclone, ...). Nothing in the app talks to a cloud.
   Pages" gives the Pdf back byte for byte (or the selected pages of it); "Export Pdf Pages With Notes" lays the ink
   on top of the original pages, so text stays text. Right click a page for "Select All Pages
   of This Pdf". Pages are drawn from a per-device cache, so a 300 page textbook opens in under a second after the
-  first time.
+  first time. In "Settings → Performance" the cache gets a size, or is left out: "Draw Pdf Pages From the Pdf" draws
+  pages straight from the Pdf, which takes less than half the memory (the textbook: 85 MB instead of 205 MB) and
+  makes importing a Pdf almost instant, at the cost of slower drawing.
+- **Pictures are kept as they are**: a picture imported into a note folder is stored once as the Png or Jpeg it was,
+  and the note refers to it. Moving or resizing it saves a few hundred bytes.
 - **Previews**: each note folder carries a picture of what is on its first page, written on save. The files list
   shows it, and file managers get it from the thumbnailer. Text that was read from the note for search travels in the
   folder too, so a second device searches a synced note at once.

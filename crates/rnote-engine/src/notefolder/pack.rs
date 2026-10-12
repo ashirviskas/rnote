@@ -20,7 +20,7 @@ impl NoteFolder {
     pub fn pack(dir: &Path, device: Device, packed_file: &Path) -> anyhow::Result<()> {
         let (_, snapshot) = Self::load(dir, device.clone())?;
         // The files the note refers to are packed with it
-        for file in snapshot.pdf_files() {
+        for file in snapshot.referenced_files() {
             let bytes = Self::read_file(dir, &file)?;
             snapshot.files.insert(Arc::new(bytes), file.extension());
         }
@@ -31,8 +31,8 @@ impl NoteFolder {
     /// Packs the document of the snapshot into one file.
     ///
     /// The document is saved for it as this device would save it into an empty note folder. What was removed
-    /// from a note is then not in the file, although batches of its folder may still hold it. A Pdf is packed
-    /// when it is among the files of the snapshot; without it its pages are packed whole. The thumbnail is the
+    /// from a note is then not in the file, although batches of its folder may still hold it. A Pdf or picture is
+    /// packed when it is among the files of the snapshot; without it its pages, or the picture, are packed whole. The thumbnail is the
     /// Png picture of the first page, when there is one.
     pub fn pack_snapshot(
         snapshot: &EngineSnapshot,
@@ -56,13 +56,13 @@ impl NoteFolder {
     }
 
     /// Loads the note of a packed note, without keeping anything of it on disk: the Pdfs it holds are among the
-    /// files of the snapshot, so that saving the snapshot into a note folder saves them too.
+    /// files of the snapshot, so that saving the snapshot into a note folder saves them too. So are its pictures.
     pub fn load_packed(packed_file: &Path, device: Device) -> anyhow::Result<EngineSnapshot> {
         let tmp_dir = tempfile::tempdir()?;
         let dir = tmp_dir.path().join("note");
         Self::unpack(packed_file, &dir)?;
         let (_, snapshot) = Self::load(&dir, device)?;
-        for file in snapshot.pdf_files() {
+        for file in snapshot.referenced_files() {
             let bytes = Self::read_file(&dir, &file)?;
             snapshot.files.insert(Arc::new(bytes), file.extension());
         }

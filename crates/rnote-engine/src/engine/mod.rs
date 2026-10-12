@@ -22,7 +22,7 @@ pub use strokecontent::StrokeContent;
 // Imports
 use crate::Image;
 use crate::document::Layout;
-use crate::notefolder::Files;
+use crate::notefolder::{Files, News};
 use crate::pens::PenMode;
 use crate::pens::{Pen, PenStyle};
 use crate::store::StrokeKey;
@@ -376,6 +376,24 @@ impl Engine {
             | self.update_content_rendering_current_viewport();
         widget_flags.refresh_ui = true;
         widget_flags.view_modified = true;
+        widget_flags
+    }
+
+    /// Brings in what other devices changed in the note folder the document is open from, see
+    /// [NoteFolder::read_news](crate::notefolder::NoteFolder::read_news). The view stays as it is, and so does the
+    /// history: undo does not take out what other devices did.
+    pub fn apply_note_news(&mut self, news: News) -> WidgetFlags {
+        self.store.apply_note_news(&news.strokes, &news.removed);
+        let mut widget_flags = WidgetFlags::default();
+        if let Some(document) = news.document {
+            self.document = document.extract_snapshot_data();
+            widget_flags |= self.background_rendering_regenerate();
+        }
+        widget_flags |= self.doc_resize_autoexpand()
+            | self.current_pen_update_state()
+            | self.update_rendering_current_viewport();
+        widget_flags.redraw = true;
+        widget_flags.refresh_ui = true;
         widget_flags
     }
 

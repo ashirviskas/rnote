@@ -54,13 +54,28 @@ impl Default for EngineSnapshot {
 impl EngineSnapshot {
     /// The Pdfs the pages of the document are from, for the pages that know their Pdf.
     pub fn pdf_files(&self) -> Vec<FileName> {
+        self.files_of(|stroke| match stroke {
+            Stroke::VectorImage(image) => image.pdf_page.as_ref().map(|pdf_page| &pdf_page.file),
+            _ => None,
+        })
+    }
+
+    /// The files the strokes of the document were made from: the Pdfs of pages and the files of pictures.
+    pub fn referenced_files(&self) -> Vec<FileName> {
+        self.files_of(|stroke| match stroke {
+            Stroke::VectorImage(image) => image.pdf_page.as_ref().map(|pdf_page| &pdf_page.file),
+            Stroke::BitmapImage(picture) => picture.file.as_ref(),
+            _ => None,
+        })
+    }
+
+    fn files_of(&self, file: impl Fn(&Stroke) -> Option<&FileName>) -> Vec<FileName> {
         let mut files = Vec::new();
         for stroke in self.stroke_components.values() {
-            if let Stroke::VectorImage(image) = stroke.as_ref()
-                && let Some(pdf_page) = image.pdf_page.as_ref()
-                && !files.contains(&pdf_page.file)
+            if let Some(file) = file(stroke)
+                && !files.contains(file)
             {
-                files.push(pdf_page.file.clone());
+                files.push(file.clone());
             }
         }
         files

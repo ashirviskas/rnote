@@ -1,10 +1,11 @@
 use super::record::{ContentKind, RecordHead};
 use super::*;
 use crate::store::chrono_comp::StrokeLayer;
-use crate::strokes::{BrushStroke, VectorImage};
+use crate::strokes::{BrushStroke, Content, VectorImage};
 use p2d::math::Vector2;
 use rnote_compose::Style;
 use rnote_compose::penpath::Element;
+use rnote_compose::shapes::Shapeable;
 
 /// A device with a page cache of its own, which is never looked at by the tests that have no Pdf.
 fn device(id: &str) -> Device {
@@ -14,6 +15,7 @@ fn device(id: &str) -> Device {
             dir: std::env::temp_dir().join("rnote-test-no-page-cache"),
             limit: 0,
         },
+        pdf_pages: PdfPageDrawing::Converted,
     }
 }
 
@@ -537,6 +539,7 @@ fn device_with_cache(id: &str, dir: PathBuf) -> Device {
             dir,
             limit: PageCache::LIMIT_DEFAULT,
         },
+        pdf_pages: PdfPageDrawing::Converted,
     }
 }
 
@@ -547,8 +550,16 @@ fn import_pdf(desk: &mut Desk) {
 
     let file = desk.snapshot.files.insert(Arc::new(PDF.to_vec()), "pdf");
     let (prefs, format) = (PdfImportPrefs::default(), Format::default());
-    let pages =
-        VectorImage::from_pdf_bytes(PDF, prefs, Vector2::ZERO, None, &format, None, Some(file));
+    let pages = VectorImage::from_pdf_bytes(
+        PDF,
+        prefs,
+        Vector2::ZERO,
+        None,
+        &format,
+        None,
+        Some(file),
+        PdfPageDrawing::Converted,
+    );
     for page in pages.unwrap() {
         desk.add_stroke(Stroke::VectorImage(page));
     }
@@ -725,4 +736,219 @@ fn the_hash_of_a_pdf_page_unit_does_not_depend_on_what_is_drawn_of_it() {
     let mut whole = page.clone();
     whole.pdf_page = None;
     assert_ne!(unit(whole).content_hash().unwrap(), hash);
+}
+
+/// A Png of noise, which does not compress: as large as a photo of the size would be.
+fn noisy_png(side: u32) -> Vec<u8> {
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    let pixels = image::RgbImage::from_fn(side, side, |_, _| image::Rgb(rng.random()));
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgb8(pixels)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    png
+}
+
+/// Imports the picture into the document, the way the engine does.
+fn import_picture(desk: &mut Desk, png: &[u8]) -> StrokeId {
+    use crate::strokes::BitmapImage;
+    use crate::strokes::resize::ImageSizeOption;
+
+    let file = desk.snapshot.files.insert(Arc::new(png.to_vec()), "png");
+    let picture =
+        BitmapImage::from_image_bytes(png, Vector2::ZERO, ImageSizeOption::RespectOriginalSize)
+            .unwrap();
+    desk.add_stroke(Stroke::BitmapImage(BitmapImage {
+        file: Some(file),
+        ..picture
+    }))
+}
+
+impl Desk {
+    /// The pictures of the document.
+    fn pictures(&self) -> Vec<&crate::strokes::BitmapImage> {
+        let strokes = self.snapshot.stroke_components.values();
+        strokes
+            .filter_map(|stroke| match stroke.as_ref() {
+                Stroke::BitmapImage(picture) => Some(picture),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// The size of the newest batch of the folder.
+fn last_batch_size(dir: &Path) -> u64 {
+    let ink_dir = dir.join("ink");
+    let batches = record::list_batches(&ink_dir).unwrap();
+    let path = batches.last().unwrap().path(&ink_dir);
+    std::fs::metadata(path).unwrap().len()
+}
+
+#[test]
+fn a_picture_is_kept_as_its_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = note_dir(&tmp);
+    let png = noisy_png(200);
+    assert!(png.len() > 100_000);
+    let mut a = Desk::create(&dir, "aaaa");
+    let id = import_picture(&mut a, &png);
+    a.save();
+
+    // The file is in the note byte for byte, the record only refers to it
+    let file = FileName::of(&png, "png");
+    assert_eq!(
+        std::fs::read(dir.join("files").join(file.as_str())).unwrap(),
+        png
+    );
+    assert!(last_batch_size(&dir) < 2_000);
+
+    // Another device decodes it
+    let mut b = Desk::open(&dir, "bbbb");
+    assert_eq!(b.pictures()[0].image.data, a.pictures()[0].image.data);
+    assert_eq!(b.pictures()[0].file, Some(file.clone()));
+    assert_eq!(b.save().records, 1);
+
+    // Moving the picture writes a small record, not the picture
+    let key = b.key_of(id);
+    let mut moved = (*b.snapshot.stroke_components[key]).clone();
+    rnote_compose::Transformable::translate(&mut moved, Vector2::new(10.0, 0.0));
+    Arc::make_mut(&mut b.snapshot.stroke_components)[key] = Arc::new(moved);
+    assert_eq!(b.save().records, 1);
+    assert!(last_batch_size(&dir) < 2_000);
+    assert_eq!(std::fs::read_dir(dir.join("files")).unwrap().count(), 1);
+    a.reload();
+    assert_eq!(a.pictures()[0].rectangle.bounds().mins[0], 10.0);
+
+    // Packed and unpacked, the file is there as it was
+    let packed = tmp.path().join("Picture.rnotez");
+    NoteFolder::pack(&dir, device("bbbb"), &packed).unwrap();
+    let unpacked = tmp.path().join("Unpacked.rnoted");
+    NoteFolder::unpack(&packed, &unpacked).unwrap();
+    assert_eq!(
+        std::fs::read(unpacked.join("files").join(file.as_str())).unwrap(),
+        png
+    );
+    let c = Desk::open(&unpacked, "cccc");
+    assert_eq!(c.pictures()[0].image.data, a.pictures()[0].image.data);
+    let loaded = NoteFolder::load_packed(&packed, device("dddd")).unwrap();
+    assert!(loaded.files.get(&file).is_some());
+}
+
+#[test]
+fn without_its_file_a_picture_is_saved_whole() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = note_dir(&tmp);
+    let mut a = Desk::create(&dir, "aaaa");
+    import_picture(&mut a, &noisy_png(20));
+    // As in a document that was loaded from a single-file note
+    a.snapshot.files = Files::default();
+    a.save();
+
+    assert!(!dir.join("files").exists());
+    let b = Desk::open(&dir, "bbbb");
+    assert_eq!(b.pictures()[0].image.data, a.pictures()[0].image.data);
+}
+
+#[test]
+fn pages_drawn_from_the_pdf_need_no_cache() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = note_dir(&tmp);
+    let cache = |name: &str| tmp.path().join(name);
+    let from_pdf = |id: &str, cache_dir: PathBuf| Device {
+        pdf_pages: PdfPageDrawing::FromPdf,
+        ..device_with_cache(id, cache_dir)
+    };
+    let mut a = Desk::create_on(&dir, device_with_cache("aaaa", cache("cache a")));
+    import_pdf(&mut a);
+    a.save();
+
+    let mut b = Desk::open_on(&dir, from_pdf("bbbb", cache("cache b")));
+    let page = b.images()[0].clone();
+    assert_eq!(page.svg_data, "");
+    assert!(page.pdf.is_some());
+    assert!(!cache("cache b").exists());
+    // The Pdf is among the files, for exports and for saving the note elsewhere
+    assert!(b.snapshot.files.get(&FileName::of(PDF, "pdf")).is_some());
+    // The page is drawn, and its Svg is made when asked for
+    let images = page.gen_images(page.bounds(), 1.0).unwrap();
+    assert!(matches!(
+        images,
+        crate::strokes::content::GeneratedContentImages::Full(images) if images[0].pixel_width > 0
+    ));
+    assert!(page.gen_svg().unwrap().svg_data.contains("<svg"));
+    // Nothing of the page changed
+    assert_eq!(b.save().records, 1);
+    assert_eq!(b.save().records, 0);
+}
+
+/// The strokes of the snapshot by their id, in the form they are saved in.
+fn strokes_by_id(snapshot: &EngineSnapshot) -> HashMap<StrokeId, String> {
+    snapshot
+        .stroke_components
+        .iter()
+        .map(|(key, stroke)| {
+            let chrono = &snapshot.chrono_components[key];
+            let saved = serde_json::to_string(&(chrono.t(), StrokeRef::of(stroke))).unwrap();
+            (chrono.id, saved)
+        })
+        .collect()
+}
+
+#[test]
+fn the_news_of_another_device_are_brought_into_the_open_document() {
+    use crate::Engine;
+    use std::time::Instant;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = note_dir(&tmp);
+    let mut a = Desk::create(&dir, "aaaa");
+    let (_, changed, removed) = (a.add(1.0), a.add(2.0), a.add(3.0));
+    a.save();
+    let mut engine = Engine::default();
+    let _ = engine.load_snapshot(a.snapshot.clone());
+    // The user draws a stroke, which can be undone
+    engine.store.insert_stroke(stroke_at(9.0), None);
+    let _ = engine.record(Instant::now());
+    a.snapshot = engine.take_snapshot();
+    a.save();
+
+    let mut b = Desk::open(&dir, "bbbb");
+    let added = b.add(4.0);
+    b.change(changed, 5.0);
+    b.remove(removed);
+    b.save();
+
+    let news = a.note.read_news(&engine.files).unwrap();
+    let mut ids = news
+        .strokes
+        .iter()
+        .map(|new| new.chrono.id)
+        .collect::<Vec<_>>();
+    ids.sort();
+    let mut expected = vec![added, changed];
+    expected.sort();
+    assert_eq!(ids, expected);
+    assert_eq!(news.removed, vec![removed]);
+    assert!(news.document.is_none() && news.camera.is_none());
+    assert!(a.note.read_news(&Files::default()).unwrap().is_empty());
+
+    // The document is then what loading the note gives
+    let _ = engine.apply_note_news(news);
+    let fresh = Desk::open(&dir, "cccc");
+    assert_eq!(
+        strokes_by_id(&engine.take_snapshot()),
+        strokes_by_id(&fresh.snapshot)
+    );
+
+    // Undo takes out the stroke of the user, not what the other device did
+    let _ = engine.undo(Instant::now());
+    a.snapshot = engine.take_snapshot();
+    assert_eq!(a.xs(), [1.0, 4.0, 5.0]);
+    // Saving writes the undone stroke as removed, and nothing of the other device again
+    assert_eq!(a.save().records, 1);
+    let mut b = Desk::open(&dir, "bbbb");
+    assert_eq!(b.xs(), [1.0, 4.0, 5.0]);
+    assert_eq!(b.save().records, 0);
 }

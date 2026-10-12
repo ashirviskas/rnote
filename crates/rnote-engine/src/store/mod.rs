@@ -17,11 +17,12 @@ pub use trash_comp::TrashComponent;
 use self::chrono_comp::StrokeLayer;
 use crate::WidgetFlags;
 use crate::engine::EngineSnapshot;
+use crate::notefolder::NewStroke;
 use crate::strokes::Stroke;
 use rnote_compose::shapes::Shapeable;
 use serde::{Deserialize, Serialize};
 use slotmap::{SecondaryMap, SlotMap};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::debug;
@@ -41,6 +42,45 @@ pub struct HistoryEntry {
     pub chrono_components: Arc<SecondaryMap<StrokeKey, Arc<ChronoComponent>>>,
     #[serde(rename = "chrono_counter")]
     pub chrono_counter: u32,
+}
+
+/// The keys of the strokes that changed when the news of a note were applied.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct NewsKeys {
+    pub(crate) removed: Vec<StrokeKey>,
+    pub(crate) inserted: Vec<StrokeKey>,
+}
+
+impl HistoryEntry {
+    /// Puts in the strokes other devices added or changed and takes out the ones they removed, found by their id.
+    /// A changed stroke is taken out and put in again.
+    fn apply_note_news(&mut self, strokes: &[NewStroke], removed: &[StrokeId]) -> NewsKeys {
+        let keys_by_id = self
+            .chrono_components
+            .iter()
+            .map(|(key, chrono)| (chrono.id, key))
+            .collect::<HashMap<StrokeId, StrokeKey>>();
+        let mut keys = NewsKeys::default();
+        let ids = strokes
+            .iter()
+            .map(|new| new.chrono.id)
+            .chain(removed.iter().copied());
+        for key in ids.filter_map(|id| keys_by_id.get(&id).copied()) {
+            Arc::make_mut(&mut self.stroke_components).remove(key);
+            Arc::make_mut(&mut self.trash_components).remove(key);
+            Arc::make_mut(&mut self.chrono_components).remove(key);
+            keys.removed.push(key);
+        }
+        for new in strokes {
+            let key = Arc::make_mut(&mut self.stroke_components).insert(Arc::clone(&new.stroke));
+            Arc::make_mut(&mut self.trash_components)
+                .insert(key, Arc::new(TrashComponent::default()));
+            Arc::make_mut(&mut self.chrono_components).insert(key, Arc::new(new.chrono));
+            self.chrono_counter = self.chrono_counter.max(new.chrono.t());
+            keys.inserted.push(key);
+        }
+        keys
+    }
 }
 
 impl Default for HistoryEntry {
@@ -307,6 +347,67 @@ impl StrokeStore {
         widget_flags.hide_redo = Some(true);
 
         widget_flags
+    }
+
+    /// Brings in what other devices changed in the note: the strokes they added or changed, without the ones they
+    /// removed. Returns the keys of the strokes that were put in.
+    ///
+    /// The changes are no change of the user, so they are not recorded. They are applied to every state in the
+    /// history instead, so that undo and redo only undo and redo what the user did.
+    pub(crate) fn apply_note_news(
+        &mut self,
+        strokes: &[NewStroke],
+        removed: &[StrokeId],
+    ) -> Vec<StrokeKey> {
+        let live_is_recorded = self
+            .history
+            .get(self.live_index)
+            .is_some_and(|entry| self.eq_w_history_entry(entry));
+        let mut live_keys = None;
+        for (i, entry) in self.history.iter_mut().enumerate() {
+            let keys = entry.apply_note_news(strokes, removed);
+            if live_is_recorded && i == self.live_index {
+                live_keys = Some(keys);
+            }
+        }
+        let keys = match live_keys {
+            // The live state is the one in the history, and stays the same allocation
+            Some(keys) => {
+                let entry = self.history[self.live_index].clone();
+                self.stroke_components = entry.stroke_components;
+                self.trash_components = entry.trash_components;
+                self.chrono_components = entry.chrono_components;
+                self.chrono_counter = entry.chrono_counter;
+                keys
+            }
+            None => {
+                let mut live = self.create_history_entry();
+                let keys = live.apply_note_news(strokes, removed);
+                self.stroke_components = live.stroke_components;
+                self.trash_components = live.trash_components;
+                self.chrono_components = live.chrono_components;
+                self.chrono_counter = live.chrono_counter;
+                keys
+            }
+        };
+
+        // The components that are not part of the history
+        for &key in &keys.removed {
+            Arc::make_mut(&mut self.selection_components).remove(key);
+            self.render_components.remove(key);
+            self.key_tree.remove_with_key(key);
+        }
+        for &key in &keys.inserted {
+            Arc::make_mut(&mut self.selection_components)
+                .insert(key, Arc::new(SelectionComponent::default()));
+            self.render_components
+                .insert(key, RenderComponent::default());
+            if let Some(stroke) = self.stroke_components.get(key) {
+                self.key_tree.insert_with_key(key, stroke.bounds());
+            }
+        }
+        self.set_rendering_dirty_for_strokes(&keys.inserted);
+        keys.inserted
     }
 
     /// Insert a new stroke into the store.
