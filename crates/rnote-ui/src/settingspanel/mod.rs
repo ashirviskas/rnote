@@ -52,6 +52,10 @@ mod imp {
         #[template_child]
         pub(crate) general_search_zhuyin_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
+        pub(crate) performance_pdf_pages_from_pdf_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
+        pub(crate) performance_page_cache_size_row: TemplateChild<adw::SpinRow>,
+        #[template_child]
         pub(crate) general_show_scrollbars_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
         pub(crate) general_optimize_epd_row: TemplateChild<adw::SwitchRow>,
@@ -424,6 +428,14 @@ impl RnSettingsPanel {
 
     pub(crate) fn general_search_zhuyin_row(&self) -> adw::SwitchRow {
         self.imp().general_search_zhuyin_row.clone()
+    }
+
+    pub(crate) fn performance_pdf_pages_from_pdf_row(&self) -> adw::SwitchRow {
+        self.imp().performance_pdf_pages_from_pdf_row.clone()
+    }
+
+    pub(crate) fn performance_page_cache_size_row(&self) -> adw::SpinRow {
+        self.imp().performance_page_cache_size_row.clone()
     }
 
     pub(crate) fn general_show_scrollbars_row(&self) -> adw::SwitchRow {

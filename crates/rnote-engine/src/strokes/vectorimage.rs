@@ -35,6 +35,27 @@ pub struct PdfPageRef {
     pub page: u32,
 }
 
+/// How the pages of a Pdf the document keeps are drawn on the canvas.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PdfPageDrawing {
+    /// Converted to an Svg once per device and kept in the [PageCache](crate::notefolder::PageCache). Draws fast,
+    /// takes memory for every page and room on disk.
+    #[default]
+    Converted,
+    /// Drawn straight from the Pdf, which is kept in memory once. Takes little memory and no cache, draws slower.
+    FromPdf,
+}
+
+/// A Pdf that is read once and kept in memory, for drawing its pages straight from it.
+#[derive(Clone)]
+pub struct ParsedPdf(pub Arc<hayro_syntax::Pdf>);
+
+impl std::fmt::Debug for ParsedPdf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ParsedPdf")
+    }
+}
+
 /// The [VectorImage] of a Pdf page as it is written into a note folder that holds the Pdf: without its `svg_data`,
 /// which every device makes from the Pdf. Read back, it is a [VectorImage] whose `svg_data` is empty.
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -75,6 +96,10 @@ pub struct VectorImage {
     /// it again, see [Self::pdf_page_svg_data].
     #[serde(rename = "pdf_page", skip_serializing_if = "Option::is_none")]
     pub pdf_page: Option<PdfPageRef>,
+    /// The Pdf of `pdf_page`, when the page is drawn straight from it ([PdfPageDrawing::FromPdf]). `svg_data`
+    /// is then empty.
+    #[serde(skip)]
+    pub pdf: Option<ParsedPdf>,
 }
 
 impl Default for VectorImage {
@@ -85,6 +110,7 @@ impl Default for VectorImage {
             rectangle: Rectangle::default(),
             text_lines: Vec::new(),
             pdf_page: None,
+            pdf: None,
         }
     }
 }
@@ -118,7 +144,7 @@ impl Content for VectorImage {
                 ),
             )
             .set("preserveAspectRatio", "none")
-            .add(svg::node::Blob::new(self.svg_data.clone()));
+            .add(svg::node::Blob::new(self.svg_data()?));
         let group = svg::node::element::Group::new()
             .set(
                 "transform",
@@ -156,6 +182,11 @@ impl Content for VectorImage {
 // to be drawn to piet.
 impl Drawable for VectorImage {
     fn draw(&self, cx: &mut impl piet::RenderContext, image_scale: f64) -> anyhow::Result<()> {
+        if let Some(page) = self.page_drawn_from_pdf() {
+            return self
+                .render_pdf_page(page, image_scale)?
+                .draw(cx, image_scale);
+        }
         let image = self.gen_svg()?.gen_image(image_scale)?;
         // image_scale does not have a meaning here
         image.draw(cx, image_scale)
@@ -203,6 +234,58 @@ impl VectorImage {
             text_lines: &self.text_lines,
             pdf_page: self.pdf_page.as_ref()?,
         })
+    }
+
+    /// The page of the Pdf the image is drawn from, see [PdfPageDrawing::FromPdf].
+    fn page_drawn_from_pdf(&self) -> Option<&hayro_syntax::page::Page<'_>> {
+        let pdf = self.pdf.as_ref().filter(|_| self.svg_data.is_empty())?;
+        pdf.0.pages().get(self.pdf_page.as_ref()?.page as usize)
+    }
+
+    /// The Svg of the image: its own, or made from the page of the Pdf it is drawn from.
+    fn svg_data(&self) -> anyhow::Result<String> {
+        match self.page_drawn_from_pdf() {
+            Some(page) => Self::pdf_page_svg_data(page),
+            None => Ok(self.svg_data.clone()),
+        }
+    }
+
+    /// The page as a bitmap at the place of the image, sharp at the scale.
+    fn render_pdf_page(
+        &self,
+        page: &hayro_syntax::page::Page,
+        image_scale: f64,
+    ) -> anyhow::Result<Image> {
+        // A bitmap as large as a page can be drawn
+        const MAX_SIDE: f64 = 8192.0;
+        let size = self.rectangle.affine.transform_vector2(Vector2::new(
+            2.0 * self.rectangle.cuboid.half_extents[0],
+            0.0,
+        ));
+        let (width, height) = page.render_dimensions();
+        let scale = (size.length() * image_scale / width as f64)
+            .min(MAX_SIDE / width.max(height) as f64) as f32;
+        let render_settings = hayro::RenderSettings {
+            x_scale: scale,
+            y_scale: scale,
+            width: None,
+            height: None,
+            bg_color: hayro::vello_cpu::color::AlphaColor::WHITE,
+        };
+        let pixmap = hayro::render(
+            page,
+            &hayro_interpret::InterpreterSettings::default(),
+            &render_settings,
+        );
+        let image = Image {
+            pixel_width: pixmap.width() as u32,
+            pixel_height: pixmap.height() as u32,
+            data: glib::Bytes::from(pixmap.data_as_u8_slice()),
+            rectangle: self.rectangle,
+            memory_format: crate::image::ImageMemoryFormat::R8g8b8a8Premultiplied,
+        };
+        image.assert_valid()?;
+        Ok(image)
     }
 
     /// The `svg_data` of the image of a page of a Pdf, as [Self::from_pdf_bytes] makes it.
@@ -291,12 +374,15 @@ impl VectorImage {
             rectangle,
             text_lines: Vec::new(),
             pdf_page: None,
+            pdf: None,
         })
     }
 
     /// The images of the pages of a Pdf.
     ///
-    /// `pdf_file` is the name the Pdf is kept under, when the document keeps it. The images then know their page.
+    /// `pdf_file` is the name the Pdf is kept under, when the document keeps it. The images then know their page,
+    /// and are drawn as `drawing` says.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_pdf_bytes(
         to_be_read: &[u8],
         pdf_import_prefs: PdfImportPrefs,
@@ -305,6 +391,7 @@ impl VectorImage {
         format: &Format,
         password: Option<String>,
         pdf_file: Option<FileName>,
+        drawing: PdfPageDrawing,
     ) -> Result<Vec<Self>, anyhow::Error> {
         // TODO: how to avoid this allocation without lifetime issues?
         let data = Arc::new(to_be_read.to_vec());
@@ -315,11 +402,13 @@ impl VectorImage {
             hayro_syntax::Pdf::new(data)
                 .map_err(|err| anyhow!("Creating Pdf instance failed, Err: {err:?}"))?
         };
+        let pdf = ParsedPdf(Arc::new(pdf));
+        let from_pdf = drawing == PdfPageDrawing::FromPdf && pdf_file.is_some();
         let interpreter_settings = hayro_interpret::InterpreterSettings::default();
         let render_settings = hayro_svg::SvgRenderSettings {
             bg_color: [255, 255, 255, 255],
         };
-        let pages = pdf.pages();
+        let pages = pdf.0.pages();
         let page_range = page_range.unwrap_or(0..pages.len());
         let page_width = if pdf_import_prefs.adjust_document {
             format.width()
@@ -336,8 +425,17 @@ impl VectorImage {
         let x = insert_pos[0];
         let mut y = insert_pos[1];
 
+        struct ImportedPage {
+            bounds: Aabb,
+            intrinsic_size: Vector2,
+            /// `None` for a page that is drawn from the Pdf.
+            svg_data: Option<String>,
+            text_lines: Vec<ImageTextLine>,
+            pdf_page: Option<PdfPageRef>,
+        }
+
         // TODO: investigate if this can be parallelized with rayon's `par_iter()`
-        let svgs = page_range
+        let imported = page_range
             .filter_map(|page_i| {
                 let page = pages.get(page_i)?;
                 let (intrinsic_width, intrinsic_height) = {
@@ -358,28 +456,41 @@ impl VectorImage {
                         PdfImportPageSpacing::OnePerDocumentPage => format.height(),
                     };
                 }
-                let svg_data = hayro_svg::convert(page, &interpreter_settings, &render_settings);
-                let svg = Svg { svg_data, bounds };
-                let text_lines = imagetext::pdf_page_text(page, &interpreter_settings);
-                let pdf_page = pdf_file.clone().map(|file| PdfPageRef {
-                    file,
-                    page: page_i as u32,
-                });
-
-                Some((svg, text_lines, pdf_page))
+                let svg_data = (!from_pdf)
+                    .then(|| hayro_svg::convert(page, &interpreter_settings, &render_settings));
+                Some(ImportedPage {
+                    bounds,
+                    intrinsic_size: Vector2::new(intrinsic_width, intrinsic_height),
+                    svg_data,
+                    text_lines: imagetext::pdf_page_text(page, &interpreter_settings),
+                    pdf_page: pdf_file.clone().map(|file| PdfPageRef {
+                        file,
+                        page: page_i as u32,
+                    }),
+                })
             })
-            .collect::<Vec<(Svg, Vec<ImageTextLine>, Option<PdfPageRef>)>>();
+            .collect::<Vec<ImportedPage>>();
 
-        svgs.into_par_iter()
-            .map(|(svg, text_lines, pdf_page)| {
+        imported
+            .into_par_iter()
+            .map(|page| {
+                let image = match page.svg_data {
+                    Some(svg_data) => Self::from_svg_str(
+                        &svg_data,
+                        page.bounds.mins,
+                        ImageSizeOption::ImposeSize(page.bounds.extents()),
+                    )?,
+                    None => Self {
+                        intrinsic_size: page.intrinsic_size,
+                        rectangle: Rectangle::from_p2d_aabb(page.bounds),
+                        pdf: Some(pdf.clone()),
+                        ..Self::default()
+                    },
+                };
                 Ok(Self {
-                    text_lines,
-                    pdf_page,
-                    ..Self::from_svg_str(
-                        svg.svg_data.as_str(),
-                        svg.bounds.mins,
-                        ImageSizeOption::ImposeSize(svg.bounds.extents()),
-                    )?
+                    text_lines: page.text_lines,
+                    pdf_page: page.pdf_page,
+                    ..image
                 })
             })
             .collect()

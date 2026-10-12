@@ -1,10 +1,12 @@
 //! The records a note folder is made of, and the batches they are stored in.
 
 // Imports
+use super::FileName;
 use crate::document::background::Background;
 use crate::engine::StrokeContent;
 use crate::store::{ChronoComponent, StrokeId};
 use crate::strokes::Stroke;
+use crate::strokes::bitmapimage::PictureImage;
 use crate::strokes::vectorimage::PdfPageImage;
 use crate::{Camera, Document};
 use anyhow::Context;
@@ -108,15 +110,43 @@ pub(crate) enum Content {
 #[serde(untagged)]
 pub(crate) enum StrokeRef<'a> {
     Whole(&'a Stroke),
-    /// The image of a Pdf page, in a note folder that holds the Pdf.
-    PdfPage(PdfPageStroke<'a>),
+    /// A stroke whose data is made from a file, in a note folder that holds the file.
+    Lean(LeanStroke<'a>),
 }
 
-/// The [Stroke] of a [PdfPageImage]. Read back, it is a [Stroke::VectorImage].
+impl<'a> StrokeRef<'a> {
+    /// The lean form of the stroke when it has one, else the whole stroke.
+    pub(crate) fn of(stroke: &'a Stroke) -> Self {
+        LeanStroke::of(stroke).map_or(Self::Whole(stroke), Self::Lean)
+    }
+}
+
+/// A [Stroke] without the data that is made from its file. Read back, it is the same kind of stroke with that data
+/// empty.
 #[derive(Debug, Clone, Copy, Serialize)]
-pub(crate) enum PdfPageStroke<'a> {
+pub(crate) enum LeanStroke<'a> {
     #[serde(rename = "vectorimage")]
     VectorImage(PdfPageImage<'a>),
+    #[serde(rename = "bitmapimage")]
+    BitmapImage(PictureImage<'a>),
+}
+
+impl<'a> LeanStroke<'a> {
+    /// The lean form of a stroke that knows its file.
+    pub(crate) fn of(stroke: &'a Stroke) -> Option<Self> {
+        match stroke {
+            Stroke::VectorImage(image) => image.as_pdf_page_image().map(Self::VectorImage),
+            Stroke::BitmapImage(image) => image.as_picture_image().map(Self::BitmapImage),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn file(&self) -> &'a FileName {
+        match self {
+            Self::VectorImage(page_image) => &page_image.pdf_page.file,
+            Self::BitmapImage(picture_image) => picture_image.file,
+        }
+    }
 }
 
 /// [Content] for writing. Serializes to the same.
@@ -242,8 +272,8 @@ impl Write for ContentHasher {
 /// A hash of the strokes with the area and the background they are looked at with, that is the same on every
 /// device that has them.
 ///
-/// The image of a Pdf page that knows its page is hashed by that, not by what is drawn of it: every device makes
-/// that from the Pdf, and it does not come out the same twice.
+/// A stroke that knows its file is hashed by its lean form, not by what is made of the file: for a Pdf page that
+/// does not come out the same twice.
 pub(crate) fn stable_content_hash(content: &StrokeContent) -> anyhow::Result<u64> {
     #[derive(Serialize)]
     struct Hashed<'a> {
@@ -252,13 +282,7 @@ pub(crate) fn stable_content_hash(content: &StrokeContent) -> anyhow::Result<u64
         background: &'a Option<Background>,
     }
 
-    let strokes = content.strokes.iter().map(|stroke| match stroke.as_ref() {
-        Stroke::VectorImage(image) => image
-            .as_pdf_page_image()
-            .map(|page_image| StrokeRef::PdfPage(PdfPageStroke::VectorImage(page_image)))
-            .unwrap_or(StrokeRef::Whole(stroke)),
-        _ => StrokeRef::Whole(stroke),
-    });
+    let strokes = content.strokes.iter().map(|stroke| StrokeRef::of(stroke));
     let mut hasher = ContentHasher::default();
     serde_json::to_writer(
         &mut hasher,

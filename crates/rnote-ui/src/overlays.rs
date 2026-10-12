@@ -291,6 +291,13 @@ impl RnOverlays {
                             true
                         };
 
+                        if close_finish_confirm {
+                            page.child()
+                                .downcast::<RnCanvasWrapper>()
+                                .unwrap()
+                                .canvas()
+                                .tidy_note_folder_on_close();
+                        }
                         appwindow.close_tab_finish(&page, close_finish_confirm);
                     }
                 ));

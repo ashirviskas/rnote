@@ -8,7 +8,7 @@ use rnote_compose::ext::Vector2Ext;
 use rnote_engine::WidgetFlags;
 use rnote_engine::engine::export::{DocExportPrefs, DocPagesExportPrefs, SelectionExportPrefs};
 use rnote_engine::engine::{EngineSnapshot, StrokeContent};
-use rnote_engine::notefolder::{Device, FileName, NoteFolder};
+use rnote_engine::notefolder::{FileName, NoteFolder};
 use rnote_engine::strokes::Stroke;
 use rnote_engine::strokes::resize::ImageSizeOption;
 use std::ops::Range;
@@ -40,7 +40,7 @@ impl RnCanvas {
     ///
     /// See [Self::load_in_rnote_bytes] for why the function returns `WidgetFlags`.
     pub(crate) async fn load_in_note_folder(&self, dir: PathBuf) -> anyhow::Result<WidgetFlags> {
-        let device = Device::this()?;
+        let device = crate::library::device()?;
         let load = blocking::unblock({
             let dir = dir.clone();
             move || {
@@ -59,7 +59,7 @@ impl RnCanvas {
     /// Loads a packed note as a new document: it is not saved anywhere until the user saves it, and then it goes
     /// where they put it, with its Pdfs. The document is named after the packed note.
     pub(crate) async fn load_in_packed_note(&self, packed: PathBuf) -> anyhow::Result<WidgetFlags> {
-        let device = Device::this()?;
+        let device = crate::library::device()?;
         let load = blocking::unblock({
             let packed = packed.clone();
             move || NoteFolder::load_packed(&packed, device)
@@ -210,9 +210,13 @@ impl RnCanvas {
             .pdf_import_prefs
             .adjust_document;
 
-        let strokes_receiver = self
-            .engine_mut()
-            .generate_pdf_pages_from_bytes(bytes, pos, page_range, password);
+        let strokes_receiver = self.engine_mut().generate_pdf_pages_from_bytes(
+            bytes,
+            pos,
+            page_range,
+            password,
+            crate::library::pdf_pages(),
+        );
         let strokes = strokes_receiver.await??;
         let widget_flags = self
             .engine_mut()
@@ -362,11 +366,22 @@ impl RnCanvas {
             .engine_ref()
             .generate_thumbnail(NoteFolder::THUMBNAIL_SIZE);
         let thumbnail = thumbnail.await?;
-        let device = Device::this()?;
+        let device = crate::library::device()?;
         let exists = NoteFolder::folder_of(dir).is_some();
-        let open = self.imp().note_folder.take().filter(|note_folder| {
+        let is_open = |note_folder: &NoteFolder| {
             exists && crate::utils::paths_abs_eq(note_folder.dir(), dir).unwrap_or(false)
-        });
+        };
+        // Saved into another note folder, the Pdfs and pictures go with the document when they are at hand
+        let is_other = self
+            .imp()
+            .note_folder
+            .borrow()
+            .as_ref()
+            .is_some_and(|note| !is_open(note));
+        if is_other && let Err(e) = self.load_files(&engine_snapshot.referenced_files()).await {
+            warn!("Not all files of the document are at hand to be saved with it, Err: {e:?}");
+        }
+        let open = self.imp().note_folder.take().filter(is_open);
 
         let dir = dir.to_path_buf();
         let save = blocking::unblock(move || {

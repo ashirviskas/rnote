@@ -35,6 +35,8 @@ pub(crate) mod sidebar;
 pub(crate) mod strokecontentpaintable;
 pub(crate) mod strokecontentpreview;
 pub(crate) mod strokewidthpicker;
+#[cfg(debug_assertions)]
+pub(crate) mod testhooks;
 pub(crate) mod unitentry;
 pub(crate) mod utils;
 pub(crate) mod workspacebrowser;

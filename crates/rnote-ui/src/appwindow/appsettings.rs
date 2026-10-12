@@ -69,6 +69,28 @@ impl RnAppWindow {
             )
             .build();
 
+        // Read where note folders are opened, see `library::device`
+        app_settings
+            .bind(
+                "pdf-pages-from-pdf",
+                &self
+                    .sidebar()
+                    .settings_panel()
+                    .performance_pdf_pages_from_pdf_row(),
+                "active",
+            )
+            .build();
+        app_settings
+            .bind(
+                "page-cache-size",
+                &self
+                    .sidebar()
+                    .settings_panel()
+                    .performance_page_cache_size_row(),
+                "value",
+            )
+            .build();
+
         // autosave
         app_settings
             .bind("autosave", self, "autosave")

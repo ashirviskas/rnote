@@ -1122,8 +1122,10 @@ impl RnCanvas {
 
     /// Brings in what other devices wrote into the open note folder since it was loaded.
     ///
-    /// The document is saved, then loaded again. Saving only adds a batch, so it takes nothing away from what
-    /// the other devices wrote, and loading puts all batches together.
+    /// The document is saved first, so that what this device changed is known when the news are read: of two
+    /// changes to the same stroke the newer one stays, as when the note is loaded. The news are then applied to
+    /// the document as it is, which keeps the view, the selection of what they do not touch, and the undo
+    /// history.
     async fn merge_note_folder_news(&self, appwindow: &RnAppWindow) {
         let has_news = |canvas: &Self| {
             let note_folder = canvas.imp().note_folder.borrow();
@@ -1147,10 +1149,31 @@ impl RnCanvas {
                 .output_file()
                 .ok_or_else(|| anyhow::anyhow!("The document has no output file any more."))?;
             self.save_document_to_file(&output_file).await?;
-            self.reload_from_disk().await
+            let mut note_folder = self
+                .imp()
+                .note_folder
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("The document has no note folder any more."))?;
+            let files = self.engine_ref().files.clone();
+            let (note_folder, news) = blocking::unblock(move || {
+                let news = note_folder.read_news(&files);
+                (note_folder, news)
+            })
+            .await;
+            let dir = note_folder.dir().to_path_buf();
+            self.imp().note_folder.replace(Some(note_folder));
+            let news = news?;
+            if news.is_empty() {
+                return anyhow::Ok(false);
+            }
+            let widget_flags = self.engine_mut().apply_note_news(news);
+            self.emit_handle_widget_flags(widget_flags);
+            crate::indexer::queue(dir);
+            anyhow::Ok(true)
         };
         match merge.await {
-            Ok(()) => {
+            Ok(false) => {}
+            Ok(true) => {
                 appwindow.overlays().dispatch_toast_text(
                     &gettext("Changes from another device were added"),
                     crate::overlays::TEXT_TOAST_TIMEOUT_DEFAULT,
@@ -1164,6 +1187,22 @@ impl RnCanvas {
             }
         }
         self.imp().note_folder_merging.set(false);
+    }
+
+    /// Tidies the note folder the document is open from, for when the document is closed. The document is then
+    /// no longer tied to it. A save that runs at the time holds the note folder; it is then tidied the next
+    /// time it is opened.
+    pub(crate) fn tidy_note_folder_on_close(&self) {
+        let Some(mut note_folder) = self.imp().note_folder.take() else {
+            return;
+        };
+        match note_folder.tidy() {
+            Ok(report) => debug!("Tidied {:?} on close: {report:?}", note_folder.dir()),
+            Err(e) => error!(
+                "Tidying {:?} on close failed, Err: {e:?}",
+                note_folder.dir()
+            ),
+        }
     }
 
     pub(crate) fn create_output_file_watcher(&self, file: &gio::File, appwindow: &RnAppWindow) {

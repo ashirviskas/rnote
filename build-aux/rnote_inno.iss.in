@@ -8,6 +8,13 @@
 #define MyAppAssocName MyAppName + " File"
 #define MyAppAssocExt ".rnote"
 #define MyAppAssocKey StringChange(MyAppAssocName, " ", "") + MyAppAssocExt
+; A note folder is opened through its entry file `note.rnoted`, Windows has no association for folders
+#define MyAppFolderAssocName MyAppName + " Note Folder"
+#define MyAppFolderAssocExt ".rnoted"
+#define MyAppFolderAssocKey StringChange(MyAppFolderAssocName, " ", "") + MyAppFolderAssocExt
+#define MyAppPackedAssocName MyAppName + " Packed Note"
+#define MyAppPackedAssocExt ".rnotez"
+#define MyAppPackedAssocKey StringChange(MyAppPackedAssocName, " ", "") + MyAppPackedAssocExt
 
 #define app_name = @APP_NAME@
 #define app_name_capitalized = @APP_NAME_CAPITALIZED@
@@ -98,7 +105,17 @@ Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}"; ValueType: string; Value
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssocExt}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssocKey}"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\application-rnote.ico"""; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\bin\{#MyAppExeName}"" ""%1"""
-Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".myp"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: "{#MyAppAssocExt}"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\{#MyAppFolderAssocKey}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppFolderAssocName}"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\{#MyAppFolderAssocExt}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppFolderAssocKey}"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\{#MyAppFolderAssocKey}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\application-rnote.ico"""; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\{#MyAppFolderAssocKey}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\bin\{#MyAppExeName}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: "{#MyAppFolderAssocExt}"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\{#MyAppPackedAssocKey}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppPackedAssocName}"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\{#MyAppPackedAssocExt}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppPackedAssocKey}"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\{#MyAppPackedAssocKey}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\application-rnote.ico"""; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\{#MyAppPackedAssocKey}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\bin\{#MyAppExeName}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: "{#MyAppPackedAssocExt}"; ValueData: ""
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\bin\{#MyAppExeName}"

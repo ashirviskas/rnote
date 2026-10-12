@@ -15,7 +15,7 @@ use rnote_engine::engine::export::{
     SelectionExportFormat, SelectionExportPrefs,
 };
 use rnote_engine::engine::{PdfPagesExport, PdfPagesScope};
-use rnote_engine::notefolder::{Device, FileName, NoteFolder};
+use rnote_engine::notefolder::{FileName, NoteFolder};
 use std::cell::RefCell;
 use std::rc::Rc;
 use tracing::{debug, error};
@@ -167,11 +167,11 @@ async fn export_packed_note(canvas: &RnCanvas, file: &gio::File) -> anyhow::Resu
         .path()
         .ok_or_else(|| anyhow::anyhow!("The file to export to has no path."))?;
     let engine_snapshot = canvas.engine_ref().take_snapshot();
-    // The Pdfs are packed as they were when they are at hand. Pages whose Pdf is not are packed whole.
-    if let Err(e) = canvas.load_files(&engine_snapshot.pdf_files()).await {
-        debug!("Not all Pdfs of the document are at hand to be packed, Err: {e:?}");
+    // The Pdfs and pictures are packed as they were when they are at hand. The others are packed whole.
+    if let Err(e) = canvas.load_files(&engine_snapshot.referenced_files()).await {
+        debug!("Not all files of the document are at hand to be packed, Err: {e:?}");
     }
-    let device = Device::this()?;
+    let device = crate::library::device()?;
     let thumbnail = canvas
         .engine_ref()
         .generate_thumbnail(NoteFolder::THUMBNAIL_SIZE);

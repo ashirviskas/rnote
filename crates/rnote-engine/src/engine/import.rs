@@ -6,6 +6,7 @@ use crate::pens::Pen;
 use crate::pens::PenStyle;
 use crate::store::StrokeKey;
 use crate::store::chrono_comp::StrokeLayer;
+use crate::strokes::vectorimage::PdfPageDrawing;
 use crate::strokes::{BitmapImage, Stroke, VectorImage};
 use crate::strokes::{Resize, resize::ImageSizeOption, resize::calculate_resize_ratio};
 use crate::{Engine, WidgetFlags};
@@ -199,13 +200,25 @@ impl Engine {
             restrain_to_viewport: true,
             respect_borders,
         };
+        let files = self.files.clone();
         rayon::spawn(move || {
             let result = || -> anyhow::Result<BitmapImage> {
-                BitmapImage::from_image_bytes(
+                let image = BitmapImage::from_image_bytes(
                     &bytes,
                     pos,
                     ImageSizeOption::ResizeImage(resize_struct),
-                )
+                )?;
+                // The picture is kept as it was, so that a note folder can save the file instead of its pixels
+                let extension = image::guess_format(&bytes)?
+                    .extensions_str()
+                    .first()
+                    .copied()
+                    .unwrap_or("img");
+                let file = files.insert(Arc::new(bytes), extension);
+                Ok(BitmapImage {
+                    file: Some(file),
+                    ..image
+                })
             };
 
             if oneshot_sender.send(result()).is_err() {
@@ -223,6 +236,8 @@ impl Engine {
     /// The bytes are expected to be from a valid Pdf.
     ///
     /// Note: `insert_pos` does not have an effect when the `adjust_document` import pref is set true.
+    ///
+    /// `drawing` is how the pages of a Pdf the document keeps are drawn.
     #[allow(clippy::type_complexity)]
     pub fn generate_pdf_pages_from_bytes(
         &self,
@@ -230,6 +245,7 @@ impl Engine {
         insert_pos: Vector2,
         page_range: Option<Range<usize>>,
         password: Option<String>,
+        drawing: PdfPageDrawing,
     ) -> oneshot::Receiver<anyhow::Result<Vec<(Stroke, Option<StrokeLayer>)>>> {
         let (oneshot_sender, oneshot_receiver) =
             oneshot::channel::<anyhow::Result<Vec<(Stroke, Option<StrokeLayer>)>>>();
@@ -281,6 +297,7 @@ impl Engine {
                             &format,
                             password,
                             pdf_file,
+                            drawing,
                         )?
                         .into_iter()
                         .map(|s| (Stroke::VectorImage(s), Some(StrokeLayer::Document)))

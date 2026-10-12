@@ -70,7 +70,13 @@ pub(crate) async fn import_file(
     if is_pdf {
         let adjust_document = config.read().import_prefs.pdf_import_prefs.adjust_document;
         let pages = engine
-            .generate_pdf_pages_from_bytes(input_bytes, Vector2::ZERO, None, None)
+            .generate_pdf_pages_from_bytes(
+                input_bytes,
+                Vector2::ZERO,
+                None,
+                None,
+                Default::default(),
+            )
             .await??;
         let _ = engine.import_generated_content(pages, adjust_document);
     } else {
