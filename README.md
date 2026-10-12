@@ -22,6 +22,22 @@ an infinite canvas and an adaptive UI for big and small screens.
 
 Written in Rust and GTK4.
 
+**This fork**
+
+- Text search across handwriting, pictures, Pdfs and typed text, read on-device; copying recognised text
+- A notes library: one synced folder for all notes, with folders inside folders that expand in place
+- Imported Pdfs are kept unchanged instead of being converted page by page: a note with a textbook in it is
+  little more than the Pdf (a 50 MB note became 35 MB), a save syncs kilobytes, and the Pdf can be exported again,
+  as it was or with the notes on top
+- A picture of every note's first page in the files list and in file managers
+- Note folders (`.rnoted`): a note is a folder of small files, so a sync tool moves only what changed and two
+  devices editing the same note merge without conflicts
+- Packed notes (`.rnotez`): one file to send, with the original Pdfs and the preview in it, and no bigger than they
+  are (the textbook note: 35.7 MB packed, 49.6 MB as a `.rnote`)
+- `rnote-cli` commands for all of it: `index`, `search`, `import`, `convert`, `pack`, `unpack`, `pdf-pages`
+
+Details below under "Text Search (this fork)" and "Notes Library and Note Folders (this fork)".
+
 **Features**
 
 - Adaptive UI focused on stylus input
@@ -118,6 +134,8 @@ To execute it, run:
 flatpak run --command=rnote-cli com.github.flxzt.rnote help
 ```
 
+This fork adds `index`, `search`, `import`, `convert`, `pack`, `unpack` and `pdf-pages`; see the sections below.
+
 ## Text Search (this fork)
 
 Handwriting, imported images and Pdf pages, and typed text are read on-device (CPU only) and can be searched from the
@@ -137,6 +155,39 @@ search entry in the workspace browser (search button in the header, or `Ctrl+F`)
   [crates/rnote-ocr](./crates/rnote-ocr/README.md).
 
 ![search](./crates/rnote-ui/data/screenshots/search.png)
+
+## Notes Library and Note Folders (this fork)
+
+One folder holds all notes, like a notebook app, and is synced by whatever tool syncs the folder (Google Drive,
+Dropbox, Syncthing, rclone, ...). Nothing in the app talks to a cloud.
+
+- **Library**: set a folder as "Notes Library" in the settings. It is pinned at the top of the workspaces bar, with
+  folders inside folders. A folder in the files list expands in place with its arrow, or opens with a double click.
+  Search looks in the open document, the shown folder, or all notes. Workspaces keep working as before.
+- **Note folders (`.rnoted`)**: a note is saved as a folder of small files instead of one file, so a sync tool moves
+  only what changed, and two devices never write the same file: every save appends a batch of the strokes that
+  changed, each device writes its own batches, and the note is the newest version of every stroke. Two devices can
+  edit the same note while offline; what the other device changed is merged in when the folder arrives, without a
+  "conflicted copy". Batches that only hold what was overwritten are cleaned up over time. Existing `.rnote` files
+  open as before and become note folders with "Save As", or `rnote-cli convert`.
+- **Pdfs are kept as they are**: a Pdf imported into a note folder is stored once, unchanged, and its pages refer to
+  it instead of each page being converted into a drawing. That is much smaller: a 112 page textbook of 36 MB gave a
+  50 MB `.rnote` file, and gives a 35 MB note folder, of which 5 KB are the pages and the ink. "Export Original Pdf
+  Pages" gives the Pdf back byte for byte (or the selected pages of it); "Export Pdf Pages With Notes" lays the ink
+  on top of the original pages, so text stays text. Right click a page for "Select All Pages
+  of This Pdf". Pages are drawn from a per-device cache, so a 300 page textbook opens in under a second after the
+  first time.
+- **Previews**: each note folder carries a picture of what is on its first page, written on save. The files list
+  shows it, and file managers get it from the thumbnailer. Text that was read from the note for search travels in the
+  folder too, so a second device searches a synced note at once.
+- **Packed notes (`.rnotez`)**: "Export Packed Note" writes the note as one zip file for sending: the ink, the
+  original Pdfs unchanged, and the preview, without what was deleted from the note. It is about the size of the Pdfs:
+  the textbook note is 35.7 MB packed against 49.6 MB as a `.rnote` file, and 6 KB of it is not the Pdf. Opening
+  one shows the note without unpacking anything on disk; "Save As" makes it a note folder, where the text for search
+  is read again. `rnote-cli pack` and `unpack` do the same from the terminal, `rnote-cli pdf-pages` takes the Pdf
+  pages out.
+
+![library](./crates/rnote-ui/data/screenshots/library.png)
 
 ## Screenshots
 
@@ -210,7 +261,10 @@ The following fonts are bundled with the application:
 
 ## File Format
 
-The `.rnote` file format is a gzipped json file.
+The `.rnote` file format is a gzipped json file. This fork adds the note folder (`.rnoted`, a folder with an entry
+file `note.rnoted`, batches of strokes in `ink/`, kept Pdfs in `files/`, recognised text in `text/` and a preview in
+`thumbnails/`) and the packed note (`.rnotez`, a zip of a note folder); see
+[docs/tasks/task_005_notes_library_sync_progress.md](./docs/tasks/task_005_notes_library_sync_progress.md).
 
 So far breaking changes in the format happened in versions:
 
