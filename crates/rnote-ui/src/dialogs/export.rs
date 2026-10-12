@@ -172,7 +172,14 @@ async fn export_packed_note(canvas: &RnCanvas, file: &gio::File) -> anyhow::Resu
         debug!("Not all Pdfs of the document are at hand to be packed, Err: {e:?}");
     }
     let device = Device::this()?;
-    blocking::unblock(move || NoteFolder::pack_snapshot(&engine_snapshot, device, &path)).await
+    let thumbnail = canvas
+        .engine_ref()
+        .generate_thumbnail(NoteFolder::THUMBNAIL_SIZE);
+    let thumbnail = thumbnail.await??;
+    blocking::unblock(move || {
+        NoteFolder::pack_snapshot(&engine_snapshot, device, &path, Some(&thumbnail))
+    })
+    .await
 }
 
 /// Exports the pages of the Pdfs the document keeps as they were: the selected pages, or all when none is

@@ -8,7 +8,9 @@ use gtk4::{
     PopoverMenu, Widget, gdk, gio, glib, glib::clone, prelude::*, subclass::prelude::*,
 };
 use once_cell::sync::Lazy;
+use rnote_engine::notefolder::NoteFolder;
 use std::cell::{Cell, RefCell};
+use tracing::debug;
 
 mod imp {
     use super::*;
@@ -17,6 +19,10 @@ mod imp {
     #[template(resource = "/com/github/flxzt/rnote/ui/filerow.ui")]
     pub(crate) struct RnFileRow {
         pub(crate) current_file: RefCell<Option<gio::File>>,
+        /// The icon of the file, shown when the file has no picture of its own.
+        pub(crate) icon: RefCell<Option<gio::Icon>>,
+        /// Watches the pictures of the note folder the row stands for.
+        pub(crate) thumbnail_monitor: RefCell<Option<gio::FileMonitor>>,
         /// The position in the list.
         pub(crate) position: Cell<u32>,
         pub(crate) drag_source: DragSource,
@@ -45,6 +51,8 @@ mod imp {
                 action_group: gio::SimpleActionGroup::new(),
                 position: Cell::new(0),
                 current_file: RefCell::new(None),
+                icon: RefCell::new(None),
+                thumbnail_monitor: RefCell::new(None),
                 drag_source,
                 file_image: TemplateChild::<Image>::default(),
                 file_label: TemplateChild::<Label>::default(),
@@ -90,6 +98,7 @@ mod imp {
                 vec![
                     // this is nullable, so it can be used to represent Option<gio::File>
                     glib::ParamSpecObject::builder::<gio::File>("current-file").build(),
+                    glib::ParamSpecObject::builder::<gio::Icon>("icon").build(),
                     glib::ParamSpecUInt::builder("position").build(),
                 ]
             });
@@ -103,6 +112,14 @@ mod imp {
                         .get::<Option<gio::File>>()
                         .expect("The value needs to be of type `Option<gio::File>`");
                     self.current_file.replace(current_file);
+                    self.obj().watch_thumbnail();
+                }
+                "icon" => {
+                    let icon = value
+                        .get::<Option<gio::Icon>>()
+                        .expect("The value needs to be of type `Option<gio::Icon>`");
+                    self.icon.replace(icon);
+                    self.obj().refresh_image();
                 }
                 "position" => {
                     let position = value
@@ -117,6 +134,7 @@ mod imp {
         fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
             match pspec.name() {
                 "current-file" => self.current_file.borrow().to_value(),
+                "icon" => self.icon.borrow().to_value(),
                 "position" => self.position.get().to_value(),
                 _ => unimplemented!(),
             }
@@ -198,8 +216,60 @@ impl RnFileRow {
         self.set_property("position", position);
     }
 
-    pub(crate) fn file_image(&self) -> Image {
-        self.imp().file_image.clone()
+    /// The height of the picture of a note's first page in the row, in pixels.
+    const PREVIEW_SIZE: i32 = 40;
+
+    /// Shows the picture of the first page of the note folder the row stands for, and keeps it fresh: the
+    /// picture changes when the note is saved, and another device's picture arrives with the sync.
+    fn watch_thumbnail(&self) {
+        let imp = self.imp();
+        imp.thumbnail_monitor.take();
+        let thumbnails_dir = self
+            .current_file()
+            .and_then(|file| file.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|ext| ext == NoteFolder::EXTENSION)
+            })
+            .map(|dir| dir.join(NoteFolder::THUMBNAILS_DIR_NAME));
+        if let Some(thumbnails_dir) = thumbnails_dir {
+            match gio::File::for_path(&thumbnails_dir)
+                .monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+            {
+                Ok(monitor) => {
+                    monitor.connect_changed(clone!(
+                        #[weak(rename_to=filerow)]
+                        self,
+                        move |_, _, _, _| filerow.refresh_image()
+                    ));
+                    imp.thumbnail_monitor.replace(Some(monitor));
+                }
+                Err(e) => debug!("Watching {thumbnails_dir:?} failed, Err: {e:?}"),
+            }
+        }
+        self.refresh_image();
+    }
+
+    /// Shows the picture of the first page of the note, or the icon when there is none.
+    fn refresh_image(&self) {
+        let imp = self.imp();
+        let thumbnail = self
+            .current_file()
+            .and_then(|file| file.path())
+            .and_then(|path| NoteFolder::thumbnail(&path))
+            .and_then(|png| gdk::Texture::from_filename(png).ok());
+        if let Some(texture) = thumbnail {
+            imp.file_image.set_paintable(Some(&texture));
+            imp.file_image.set_pixel_size(Self::PREVIEW_SIZE);
+            imp.file_image.add_css_class("note-preview");
+            return;
+        }
+        match imp.icon.borrow().as_ref() {
+            Some(icon) => imp.file_image.set_from_gicon(icon),
+            None => imp.file_image.clear(),
+        }
+        imp.file_image.set_pixel_size(-1);
+        imp.file_image.remove_css_class("note-preview");
     }
 
     pub(crate) fn file_label(&self) -> Label {

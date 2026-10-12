@@ -131,6 +131,11 @@
     margin-bottom: 2px;
 }
 
+/* The picture of a note's first page: a thin shadow sets its page off from the row */
+.files-listview .note-preview {
+    -gtk-icon-shadow: 0 0 2px alpha(black, 0.5);
+}
+
 /*
 .workspaces-listbox row:selected {
 }

@@ -24,22 +24,29 @@ impl NoteFolder {
             let bytes = Self::read_file(dir, &file)?;
             snapshot.files.insert(Arc::new(bytes), file.extension());
         }
-        Self::pack_snapshot(&snapshot, device, packed_file)
+        let thumbnail = Self::thumbnail(dir).and_then(|path| std::fs::read(path).ok());
+        Self::pack_snapshot(&snapshot, device, packed_file, thumbnail.as_deref())
     }
 
     /// Packs the document of the snapshot into one file.
     ///
     /// The document is saved for it as this device would save it into an empty note folder. What was removed
     /// from a note is then not in the file, although batches of its folder may still hold it. A Pdf is packed
-    /// when it is among the files of the snapshot; without it its pages are packed whole.
+    /// when it is among the files of the snapshot; without it its pages are packed whole. The thumbnail is the
+    /// Png picture of the first page, when there is one.
     pub fn pack_snapshot(
         snapshot: &EngineSnapshot,
         device: Device,
         packed_file: &Path,
+        thumbnail: Option<&[u8]>,
     ) -> anyhow::Result<()> {
         let tmp_dir = tempfile::tempdir()?;
         let clean_dir = tmp_dir.path().join("note");
-        Self::create(&clean_dir, device)?.save(snapshot)?;
+        let mut note = Self::create(&clean_dir, device)?;
+        note.save(snapshot)?;
+        if let Some(png) = thumbnail {
+            note.write_thumbnail(png)?;
+        }
 
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::<u8>::new()));
         add_dir(&mut zip, &clean_dir, "")?;

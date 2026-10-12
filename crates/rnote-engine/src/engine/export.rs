@@ -5,14 +5,13 @@ use crate::fileformats::{FileFormatSaver, xoppformat};
 use crate::strokes::Stroke;
 use anyhow::Context;
 use futures::channel::oneshot;
-use p2d::math::Vector2;
+use p2d::bounding_volume::{Aabb, BoundingVolume};
 use rayon::prelude::*;
 use rnote_compose::SplitOrder;
 use rnote_compose::Transformable;
 use rnote_compose::ext::AabbExt;
 use rnote_compose::shapes::Shapeable;
 use serde::{Deserialize, Serialize};
-use std::io::Cursor;
 use std::sync::Arc;
 use tracing::error;
 
@@ -477,16 +476,59 @@ impl Engine {
         )
     }
 
-    /// Extract thumbnail content.
+    /// The content of the first page: what is on the first page that has at least half as much on it as the
+    /// fullest page, with a margin, else the page at the origin.
     ///
-    /// It is ensureed this [StrokeContent] has bounds and a background.
-    /// Therefore it is ensured generating a SVG from it will never return `Ok(None)`.
-    pub fn extract_thumbnail_content(&self, size: Vector2) -> StrokeContent {
-        let scale_factor = self.camera.scale_factor();
-        let (keys, bounds) = self.store.thumbnail_keys_as_rendered(size * scale_factor);
-        let bounds = bounds.unwrap_or_else(|| self.document.bounds());
+    /// Not simply the first page a stroke touches, as for the export of the pages: a picture that reaches a
+    /// little over the edge of its page would give the near-empty page next to it. And not the whole page: a
+    /// few lines of ink on a page would be lost in its white space. A page of a Pdf fills its page, so for a
+    /// note of such pages the picture is the page.
+    pub fn extract_first_page_content(&self) -> StrokeContent {
+        const MARGIN_OF_PAGE: f64 = 0.04;
+        let strokes_bounds = self
+            .store
+            .strokes_bounds(&self.store.stroke_keys_as_rendered());
+        let covered = |page: &Aabb, stroke: &Aabb| -> f64 {
+            let width = page.maxs[0].min(stroke.maxs[0]) - page.mins[0].max(stroke.mins[0]);
+            let height = page.maxs[1].min(stroke.maxs[1]) - page.mins[1].max(stroke.mins[1]);
+            width.max(0.0) * height.max(0.0)
+        };
+        let pages = self.document.pages_bounds(SplitOrder::default());
+        let covered_pages = pages
+            .iter()
+            .map(|page| {
+                strokes_bounds
+                    .iter()
+                    .map(|stroke| covered(page, stroke))
+                    .sum()
+            })
+            .collect::<Vec<f64>>();
+        let fullest = covered_pages.iter().copied().fold(0.0, f64::max);
+        let page = pages
+            .iter()
+            .zip(&covered_pages)
+            .find(|(_, covered)| **covered > 0.0 && **covered >= fullest / 2.0)
+            .map(|(page, _)| *page)
+            .or(pages.first().copied())
+            .unwrap_or_else(|| self.document.bounds());
+        let on_page = strokes_bounds
+            .iter()
+            .filter(|stroke| covered(&page, stroke) > 0.0)
+            .fold(Aabb::new_invalid(), |all, stroke| all.merged(stroke));
+        let bounds = if on_page.mins[0] <= on_page.maxs[0] {
+            let on_page = on_page.loosened(page.extents().max_element() * MARGIN_OF_PAGE);
+            Aabb::new(on_page.mins.max(page.mins), on_page.maxs.min(page.maxs))
+        } else {
+            page
+        };
         StrokeContent::default()
-            .with_strokes(self.store.get_strokes_arc(&keys))
+            .with_strokes(
+                self.store.get_strokes_arc(
+                    &self
+                        .store
+                        .stroke_keys_as_rendered_intersecting_bounds(bounds),
+                ),
+            )
             .with_bounds(bounds)
             .with_background(self.document.config.background)
     }
@@ -1011,65 +1053,24 @@ impl Engine {
         oneshot_receiver
     }
 
-    /// Generate a thumbnail PNG.
+    /// A small picture of the document, for showing it among other documents: its first page, as Png.
     ///
-    /// # Arguments
-    /// * `size`: the size (width/height) of the thumbnail in px.
-    pub fn generate_thumbnail(
-        &self,
-        size: u32,
-        export_format: SelectionExportFormat,
-    ) -> oneshot::Receiver<Result<Option<Vec<u8>>, anyhow::Error>> {
-        let (oneshot_sender, oneshot_receiver) =
-            oneshot::channel::<anyhow::Result<Option<Vec<u8>>>>();
-        let selection_export_prefs = SelectionExportPrefs {
-            export_format,
-            ..Default::default()
-        };
+    /// The first page is the first page that has something on it, as it is for an export of the pages; the
+    /// page at the origin when nothing is. The longer side of the picture is `size` pixels.
+    pub fn generate_thumbnail(&self, size: u32) -> oneshot::Receiver<anyhow::Result<Vec<u8>>> {
+        let (oneshot_sender, oneshot_receiver) = oneshot::channel::<anyhow::Result<Vec<u8>>>();
+        let content = self.extract_first_page_content();
 
-        let content = self.extract_thumbnail_content(Vector2::new(size as f64, size as f64));
         rayon::spawn(move || {
-            let result = || -> Result<Option<Vec<u8>>, anyhow::Error> {
-                let svg = content
-                    .gen_svg(
-                        selection_export_prefs.with_background,
-                        selection_export_prefs.with_pattern,
-                        selection_export_prefs.optimize_printing,
-                        selection_export_prefs.margin,
-                    )?
-                    .context("Unable to generate SVG from thumbnail content")?;
-                let image_format = match export_format {
-                    SelectionExportFormat::Svg => {
-                        return Err(anyhow::anyhow!("image format not set to a bitmap format."));
-                    }
-                    SelectionExportFormat::Png => image::ImageFormat::Png,
-                    SelectionExportFormat::Jpeg => image::ImageFormat::Jpeg,
-                };
-
-                let image = svg.gen_image(1.0)?;
-                let (resize_width, resize_height) = {
-                    let width = image.pixel_width;
-                    let height = image.pixel_height;
-                    let ratio = if width >= height {
-                        // Landscape
-                        width as f64 / size as f64
-                    } else {
-                        // Portrait
-                        height as f64 / size as f64
-                    };
-                    let nwidth = width as f64 / ratio;
-                    let nheight = height as f64 / ratio;
-                    (nwidth, nheight)
-                };
-                let image = image::imageops::resize(
-                    &image.into_imgbuf()?,
-                    resize_width.ceil() as u32,
-                    resize_height.ceil() as u32,
-                    image::imageops::FilterType::Nearest,
-                );
-                let mut bytes: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-                image.write_to(&mut bytes, image_format)?;
-                Ok(Some(bytes.into_inner()))
+            let result = || -> anyhow::Result<Vec<u8>> {
+                let bounds = content
+                    .bounds()
+                    .context("The document has no page to draw.")?;
+                let image_scale = size as f64 / bounds.extents().max_element();
+                let image = content
+                    .gen_image(true, true, false, 0.0, image_scale)?
+                    .context("Drawing the first page of the document gave no image.")?;
+                image.into_encoded_bytes(image::ImageFormat::Png, None)
             };
             if oneshot_sender.send(result()).is_err() {
                 error!(

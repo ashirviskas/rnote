@@ -14,7 +14,7 @@ use rnote_engine::strokes::resize::ImageSizeOption;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 impl RnCanvas {
     /// Load the bytes of a `.rnote` file and imports it into the engine.
@@ -356,6 +356,12 @@ impl RnCanvas {
     /// from gets the document as its new state.
     async fn save_to_note_folder(&self, dir: &Path) -> anyhow::Result<()> {
         let engine_snapshot = self.engine_ref().take_snapshot();
+        // The note is shown among the others by its first page, as it is after this save. The borrow of the
+        // engine must not last over the await, the engine is needed while the picture is drawn.
+        let thumbnail = self
+            .engine_ref()
+            .generate_thumbnail(NoteFolder::THUMBNAIL_SIZE);
+        let thumbnail = thumbnail.await?;
         let device = Device::this()?;
         let exists = NoteFolder::folder_of(dir).is_some();
         let open = self.imp().note_folder.take().filter(|note_folder| {
@@ -376,6 +382,12 @@ impl RnCanvas {
                 Err(e) => return (None, Err(e)),
             };
             let saved = note_folder.save(&engine_snapshot).map(|_| ());
+            // The picture is not part of the note: not having it is not a failed save
+            if saved.is_ok()
+                && let Err(e) = thumbnail.and_then(|png| note_folder.write_thumbnail(&png))
+            {
+                warn!("Writing the thumbnail of the note {dir:?} failed, Err: {e:?}");
+            }
             (Some(note_folder), saved)
         });
         let (note_folder, saved) = save.await;
