@@ -17,6 +17,13 @@ pub(crate) async fn run_convert(input: &Path, output: &Path) -> anyhow::Result<(
     {
         let mut note = NoteFolder::create(output, Device::this()?)?;
         note.save(&engine_snapshot)?;
+        // The note is shown among others by its first page
+        let mut engine = Engine::default();
+        let _ = engine.load_snapshot(engine_snapshot);
+        let thumbnail = engine
+            .generate_thumbnail(NoteFolder::THUMBNAIL_SIZE)
+            .await??;
+        note.write_thumbnail(&thumbnail)?;
     } else {
         let mut engine = Engine::default();
         let _ = engine.load_snapshot(engine_snapshot);

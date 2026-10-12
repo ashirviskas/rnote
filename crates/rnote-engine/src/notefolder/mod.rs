@@ -136,6 +136,11 @@ impl NoteFolder {
     /// The directory of a note folder for the text that was read from the note. The engine does not read text;
     /// who does keeps it there, so that it is synced with the note.
     pub const TEXT_DIR_NAME: &'static str = "text";
+    /// The directory of the pictures of the first page of the note, for showing the note among others without
+    /// opening it. Each device writes its own, as with batches; the newest is the note's.
+    pub const THUMBNAILS_DIR_NAME: &'static str = "thumbnails";
+    /// The longer side of a thumbnail in pixels.
+    pub const THUMBNAIL_SIZE: u32 = 256;
 
     /// The note folder the path stands for: the path of a note folder itself, or of its entry file.
     pub fn folder_of(path: &Path) -> Option<PathBuf> {
@@ -378,6 +383,27 @@ impl NoteFolder {
 
     fn files_dir(&self) -> PathBuf {
         self.dir.join(Self::FILES_DIR_NAME)
+    }
+
+    /// The newest picture of the first page of the note folder at the directory, when a device wrote one.
+    pub fn thumbnail(dir: &Path) -> Option<PathBuf> {
+        let entries = std::fs::read_dir(dir.join(Self::THUMBNAILS_DIR_NAME)).ok()?;
+        entries
+            .flatten()
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "png"))
+            .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
+            .max()
+            .map(|(_, path)| path)
+    }
+
+    /// Writes the picture of the first page of the note, as this device's.
+    pub fn write_thumbnail(&self, png: &[u8]) -> anyhow::Result<()> {
+        let thumbnails_dir = self.dir.join(Self::THUMBNAILS_DIR_NAME);
+        std::fs::create_dir_all(&thumbnails_dir)?;
+        crate::utils::atomic_save_to_file(
+            thumbnails_dir.join(format!("{}.png", self.device.id.as_str())),
+            png,
+        )
     }
 
     /// Whether the note holds the file once the snapshot is saved: it is in its files already, or it is among

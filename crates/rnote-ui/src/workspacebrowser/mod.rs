@@ -14,10 +14,10 @@ pub(crate) use workspacesbar::RnWorkspacesBar;
 use crate::appwindow::RnAppWindow;
 use gtk4::{
     AnyFilter, Button, CompositeTemplate, ConstantExpression, CustomFilter, CustomSorter,
-    DirectoryList, FileFilter, FilterChange, FilterListModel, Grid, Label, ListBox, ListItem,
-    ListView, MultiSorter, PropertyExpression, ScrolledWindow, SearchEntry, Separator,
-    SignalListItemFactory, SingleSelection, SortListModel, SorterChange, Widget, gdk, gio, glib,
-    glib::clone, glib::closure, prelude::*, subclass::prelude::*,
+    DirectoryList, FileFilter, FilterListModel, Grid, Label, ListBox, ListItem, ListView,
+    MultiSorter, PropertyExpression, ScrolledWindow, SearchEntry, Separator, SignalListItemFactory,
+    SingleSelection, SortListModel, TreeExpander, TreeListModel, TreeListRow, Widget, gdk, gio,
+    glib, glib::clone, glib::closure, prelude::*, subclass::prelude::*,
 };
 use rnote_engine::notefolder::NoteFolder;
 use std::cell::RefCell;
@@ -252,43 +252,8 @@ impl RnWorkspaceBrowser {
     fn setup_files_list(&self, appwindow: &RnAppWindow) {
         let imp = self.imp();
 
-        let folders_filter = create_folders_filter();
-        let notes_filter = create_notes_filter();
-        let files_filter = create_files_filter();
-        let folders_sorter = create_folders_sorter();
-        let notes_sorter = create_notes_sorter();
-        let files_sorter = create_files_sorter();
-
-        let folders_list_model = SortListModel::new(
-            Some(FilterListModel::new(
-                Some(imp.dir_list.clone()),
-                Some(folders_filter.clone()),
-            )),
-            Some(folders_sorter.clone()),
-        );
-        let notes_list_model = SortListModel::new(
-            Some(FilterListModel::new(
-                Some(imp.dir_list.clone()),
-                Some(notes_filter.clone()),
-            )),
-            Some(notes_sorter.clone()),
-        );
-        let files_list_model = SortListModel::new(
-            Some(FilterListModel::new(
-                Some(imp.dir_list.clone()),
-                Some(files_filter.clone()),
-            )),
-            Some(files_sorter.clone()),
-        );
-        let combined_list = gio::ListStore::new::<SortListModel>();
-        combined_list.append(&folders_list_model);
-        combined_list.append(&notes_list_model);
-        combined_list.append(&files_list_model);
-
         imp.list_selection_model
-            .set_model(Some(&SingleSelection::new(Some(FlattenListModel::new(
-                Some(combined_list),
-            )))));
+            .set_model(Some(&SingleSelection::new(Some(dir_rows(&imp.dir_list)))));
 
         imp.files_listview
             .get()
@@ -300,49 +265,18 @@ impl RnWorkspaceBrowser {
             .get()
             .set_header_factory(Some(&create_files_list_header_factory(appwindow)));
 
-        self.imp().dir_list.connect_items_changed(clone!(
-            #[weak]
-            folders_filter,
-            #[weak]
-            folders_sorter,
-            #[weak]
-            notes_filter,
-            #[weak]
-            notes_sorter,
-            #[weak]
-            files_filter,
-            #[weak]
-            files_sorter,
-            move |_, _, _, _| {
-                folders_filter.changed(FilterChange::Different);
-                folders_sorter.changed(SorterChange::Different);
-                notes_filter.changed(FilterChange::Different);
-                notes_sorter.changed(SorterChange::Different);
-                files_filter.changed(FilterChange::Different);
-                files_sorter.changed(SorterChange::Different);
-            }
-        ));
-
         imp.files_listview.get().connect_activate(clone!(
             #[weak]
             appwindow,
-            #[weak]
-            folders_filter,
-            #[weak]
-            folders_sorter,
-            #[weak]
-            notes_filter,
-            #[weak]
-            notes_sorter,
-            #[weak]
-            files_filter,
-            #[weak]
-            files_sorter,
             move |listview, position| {
                 let file_info = listview
                     .model()
                     .unwrap()
                     .item(position)
+                    .unwrap()
+                    .downcast::<TreeListRow>()
+                    .unwrap()
+                    .item()
                     .unwrap()
                     .downcast::<gio::FileInfo>()
                     .unwrap();
@@ -361,12 +295,6 @@ impl RnWorkspaceBrowser {
                         }
                     ));
                 };
-                folders_filter.changed(FilterChange::Different);
-                folders_sorter.changed(SorterChange::Different);
-                notes_filter.changed(FilterChange::Different);
-                notes_sorter.changed(SorterChange::Different);
-                files_filter.changed(FilterChange::Different);
-                files_sorter.changed(SorterChange::Different);
             }
         ));
 
@@ -391,6 +319,56 @@ impl RnWorkspaceBrowser {
     }
 }
 
+/// The rows of a directory: its folders, then its notes, then its other files, each sorted. A folder row can
+/// be expanded to the rows of the folder, which are made the same way.
+fn dir_rows(dir_list: &DirectoryList) -> FlattenListModel {
+    let sections = gio::ListStore::new::<TreeListModel>();
+    for section in dir_sections(dir_list) {
+        sections.append(&TreeListModel::new(section, false, false, folder_rows));
+    }
+    FlattenListModel::new(Some(sections))
+}
+
+/// The three sorted sections of a directory.
+fn dir_sections(dir_list: &DirectoryList) -> [SortListModel; 3] {
+    [
+        sorted_rows(dir_list, create_folders_filter(), create_folders_sorter()),
+        sorted_rows(dir_list, create_notes_filter(), create_notes_sorter()),
+        sorted_rows(dir_list, create_files_filter(), create_files_sorter()),
+    ]
+}
+
+fn sorted_rows(
+    dir_list: &DirectoryList,
+    filter: impl IsA<gtk4::Filter>,
+    sorter: impl IsA<gtk4::Sorter>,
+) -> SortListModel {
+    SortListModel::new(
+        Some(FilterListModel::new(Some(dir_list.clone()), Some(filter))),
+        Some(sorter),
+    )
+}
+
+/// What a folder row expands to: the files of the folder, in sections as at the top. The tree makes the folders
+/// among them expandable in turn. A note folder is a note, it does not expand.
+fn folder_rows(item: &glib::Object) -> Option<gio::ListModel> {
+    let fileinfo = item.downcast_ref::<gio::FileInfo>()?;
+    if fileinfo.file_type() != gio::FileType::Directory || is_note_folder(fileinfo) {
+        return None;
+    }
+    let dir = fileinfo
+        .attribute_object("standard::file")?
+        .downcast::<gio::File>()
+        .ok()?;
+    let dir_list = DirectoryList::new(Some("standard::*"), Some(&dir));
+    dir_list.set_monitored(true);
+    let sections = gio::ListStore::new::<SortListModel>();
+    for section in dir_sections(&dir_list) {
+        sections.append(&section);
+    }
+    Some(FlattenListModel::new(Some(sections)).upcast())
+}
+
 fn create_files_list_row_factory(appwindow: &RnAppWindow) -> SignalListItemFactory {
     let factory = SignalListItemFactory::new();
 
@@ -402,14 +380,18 @@ fn create_files_list_row_factory(appwindow: &RnAppWindow) -> SignalListItemFacto
 
             let filerow = RnFileRow::new();
             filerow.init(&appwindow);
-            list_item.set_child(Some(&filerow));
+            // The expander indents the row by its depth and shows the arrow of a folder
+            let expander = TreeExpander::new();
+            expander.set_child(Some(&filerow));
+            list_item.set_child(Some(&expander));
 
             let list_item_expr = ConstantExpression::new(list_item);
-            let fileinfo_expr =
+            let tree_row_expr =
                 PropertyExpression::new(ListItem::static_type(), Some(&list_item_expr), "item");
+            let fileinfo_expr =
+                PropertyExpression::new(TreeListRow::static_type(), Some(&tree_row_expr), "item");
             let position_expr =
                 PropertyExpression::new(ListItem::static_type(), Some(&list_item_expr), "position");
-
             let file_expr = fileinfo_expr.chain_closure::<Option<gio::File>>(closure!(
                 |_: Option<glib::Object>, fileinfo_obj: Option<glib::Object>| {
                     fileinfo_obj
@@ -494,10 +476,11 @@ fn create_files_list_row_factory(appwindow: &RnAppWindow) -> SignalListItemFacto
                     String::from("")
                 }));
 
+            tree_row_expr.bind(&expander, "list-row", Widget::NONE);
             file_expr.bind(&filerow, "current-file", Widget::NONE);
             position_expr.bind(&filerow, "position", Widget::NONE);
             basename_expr.bind(&filerow.file_label(), "label", Widget::NONE);
-            icon_name_expr.bind(&filerow.file_image(), "gicon", Widget::NONE);
+            icon_name_expr.bind(&filerow, "icon", Widget::NONE);
             content_provider_expr.bind(&filerow.drag_source(), "content", Widget::NONE);
         }
     ));
