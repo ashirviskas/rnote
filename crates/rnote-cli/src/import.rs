@@ -2,6 +2,7 @@
 use crate::{cli, validators};
 use p2d::math::Vector2;
 use rnote_engine::Engine;
+use rnote_engine::engine::import::PdfImportPrefs;
 use rnote_engine::engine::{EngineConfigShared, EngineSnapshot};
 use rnote_engine::notefolder::{Device, NoteFolder};
 use std::path::Path;
@@ -10,6 +11,7 @@ pub(crate) async fn run_import(
     rnote_file: &Path,
     input_file: &Path,
     xopp_dpi: f64,
+    pdf_import_prefs: PdfImportPrefs,
 ) -> anyhow::Result<()> {
     validators::path_is_note(rnote_file)?;
     // Xopp files don't require file extensions
@@ -19,7 +21,7 @@ pub(crate) async fn run_import(
     let mut engine = Engine::default();
     let _ = engine.install_config(&config, None);
 
-    apply_import_prefs(&config, xopp_dpi)?;
+    apply_import_prefs(&config, xopp_dpi, pdf_import_prefs)?;
 
     let rnote_file_disp = rnote_file.display().to_string();
     let input_file_disp = input_file.display().to_string();
@@ -46,8 +48,13 @@ pub(crate) async fn run_import(
     Ok(())
 }
 
-pub(crate) fn apply_import_prefs(config: &EngineConfigShared, xopp_dpi: f64) -> anyhow::Result<()> {
+pub(crate) fn apply_import_prefs(
+    config: &EngineConfigShared,
+    xopp_dpi: f64,
+    pdf_import_prefs: PdfImportPrefs,
+) -> anyhow::Result<()> {
     config.write().import_prefs.xopp_import_prefs.dpi = xopp_dpi;
+    config.write().import_prefs.pdf_import_prefs = pdf_import_prefs;
     Ok(())
 }
 

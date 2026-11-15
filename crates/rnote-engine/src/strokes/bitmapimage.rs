@@ -1,11 +1,11 @@
 // Imports
+use super::Content;
 use super::imagetext::{self, ImageTextLine};
 use super::resize::{ImageSizeOption, calculate_resize_ratio};
-use super::{Content, Stroke};
 use crate::Drawable;
 use crate::Image;
 use crate::document::Format;
-use crate::engine::import::{PdfImportPageSpacing, PdfImportPrefs};
+use crate::engine::import::{PdfImportPrefs, PdfPageToPlace};
 use crate::notefolder::FileName;
 use anyhow::anyhow;
 use hayro::{hayro_interpret, hayro_syntax, vello_cpu};
@@ -207,8 +207,6 @@ impl BitmapImage {
         } else {
             return Ok(vec![]);
         };
-        let x = insert_pos[0];
-        let mut y = insert_pos[1];
 
         struct RenderedPage {
             png_data: Vec<u8>,
@@ -217,18 +215,27 @@ impl BitmapImage {
             text_lines: Vec<ImageTextLine>,
         }
 
-        // TODO: investigate if this can be parallelized with rayon's `par_iter()`
-        let rendered_pages = page_range
-            .map(|page_i| {
+        let to_place = page_range
+            .map(|index| {
                 let page = pages
-                    .get(page_i)
-                    .ok_or_else(|| anyhow::anyhow!("no page at index '{page_i}"))?;
-                let (intrinsic_width, intrinsic_height) = {
-                    let dimensions = page.render_dimensions();
-                    (dimensions.0 as f64, dimensions.1 as f64)
-                };
-                let width = intrinsic_width * page_zoom;
-                let height = intrinsic_height * page_zoom;
+                    .get(index)
+                    .ok_or_else(|| anyhow::anyhow!("no page at index '{index}"))?;
+                let dimensions = page.render_dimensions();
+                Ok(PdfPageToPlace {
+                    index,
+                    size: Vector2::new(dimensions.0 as f64, dimensions.1 as f64) * page_zoom,
+                })
+            })
+            .collect::<anyhow::Result<Vec<PdfPageToPlace>>>()?;
+        let positions = pdf_import_prefs.page_positions(&to_place, insert_pos, format.height());
+
+        // TODO: investigate if this can be parallelized with rayon's `par_iter()`
+        let rendered_pages = to_place
+            .into_iter()
+            .zip(positions)
+            .map(|(to_place, pos)| {
+                let page = &pages[to_place.index];
+                let (width, height) = (to_place.size[0], to_place.size[1]);
                 let render_settings = hayro::RenderSettings {
                     x_scale: (pdf_import_prefs.bitmap_scalefactor * page_zoom) as f32,
                     y_scale: (pdf_import_prefs.bitmap_scalefactor * page_zoom) as f32,
@@ -240,25 +247,12 @@ impl BitmapImage {
                 // TODO: implement drawing page borders.
                 // Possibly with vello-cpu, since it already is a dependency of hayro
                 let pixmap = hayro::render(page, &interpreter_settings, &render_settings);
-                let rendered = RenderedPage {
+                Ok(RenderedPage {
                     png_data: pixmap.into_png()?,
-                    pos: Vector2::new(x, y),
-                    size: Vector2::new(width, height),
+                    pos,
+                    size: to_place.size,
                     text_lines: imagetext::pdf_page_text(page, &interpreter_settings),
-                };
-
-                if pdf_import_prefs.adjust_document {
-                    y += height
-                } else {
-                    y += match pdf_import_prefs.page_spacing {
-                        PdfImportPageSpacing::Continuous => {
-                            height + Stroke::IMPORT_OFFSET_DEFAULT[1] * 0.5
-                        }
-                        PdfImportPageSpacing::OnePerDocumentPage => format.height(),
-                    };
-                }
-
-                Ok(rendered)
+                })
             })
             .collect::<anyhow::Result<Vec<RenderedPage>>>()?;
 

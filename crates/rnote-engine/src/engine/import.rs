@@ -12,7 +12,6 @@ use crate::strokes::{Resize, resize::ImageSizeOption, resize::calculate_resize_r
 use crate::{Engine, WidgetFlags};
 use futures::channel::oneshot;
 use p2d::math::Vector2;
-use rnote_compose::ext::Vector2Ext;
 use rnote_compose::shapes::Shapeable;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
@@ -99,6 +98,20 @@ pub struct PdfImportPrefs {
     /// Whether the document layout should be adjusted to the Pdf
     #[serde(rename = "adjust_document")]
     pub adjust_document: bool,
+    /// How many pages are placed next to each other in a row. 1 places them below each other, 2 as spreads of a
+    /// book.
+    #[serde(rename = "columns")]
+    pub columns: u32,
+    /// Whether the first page of the Pdf sits alone at the end of the first row, like the cover of a book. Only has
+    /// an effect with more than one column.
+    #[serde(rename = "first_page_alone")]
+    pub first_page_alone: bool,
+    /// The gap between the pages of a row.
+    #[serde(rename = "column_gap")]
+    pub column_gap: f64,
+    /// The gap between rows, with continuous page spacing.
+    #[serde(rename = "row_gap")]
+    pub row_gap: f64,
 }
 
 impl Default for PdfImportPrefs {
@@ -109,7 +122,88 @@ impl Default for PdfImportPrefs {
             page_spacing: PdfImportPageSpacing::default(),
             bitmap_scalefactor: 1.8,
             adjust_document: false,
+            columns: 1,
+            first_page_alone: false,
+            column_gap: Self::GAP_DEFAULT,
+            row_gap: Self::GAP_DEFAULT,
         }
+    }
+}
+
+/// A page of a Pdf that is placed on the document at import.
+#[derive(Debug, Clone, Copy)]
+pub struct PdfPageToPlace {
+    /// The index of the page in the Pdf.
+    pub index: usize,
+    /// The size of the page on the document.
+    pub size: Vector2,
+}
+
+impl PdfImportPrefs {
+    pub const GAP_DEFAULT: f64 = 16.0;
+    pub const COLUMNS_MAX: u32 = 20;
+
+    /// The top left corner of each page on the document, in the order of `pages`. `pages` are in the order of the
+    /// Pdf.
+    ///
+    /// Pages fill rows of [Self::columns] from left to right. The column of a page follows its index in the Pdf, so
+    /// that spreads pair up as in the Pdf whatever page the import starts at. All columns are as wide as the widest
+    /// page.
+    ///
+    /// A row is as high as its highest page, plus [Self::row_gap] with continuous spacing. With one row per
+    /// document page, or when the document is adjusted to the Pdf, every row takes a document page.
+    /// `format_height` is the document page height when the document is not adjusted.
+    pub fn page_positions(
+        &self,
+        pages: &[PdfPageToPlace],
+        origin: Vector2,
+        format_height: f64,
+    ) -> Vec<Vector2> {
+        let Some(first) = pages.first() else {
+            return vec![];
+        };
+        let columns = self.columns.clamp(1, Self::COLUMNS_MAX) as usize;
+        let lead = if self.first_page_alone {
+            columns - 1
+        } else {
+            0
+        };
+        let first_row = (first.index + lead) / columns;
+        let row = |page: &PdfPageToPlace| (page.index + lead) / columns - first_row;
+        let column = |page: &PdfPageToPlace| (page.index + lead) % columns;
+
+        let column_width = pages.iter().map(|page| page.size[0]).fold(0.0, f64::max);
+        let page_height_max = pages.iter().map(|page| page.size[1]).fold(0.0, f64::max);
+        let n_rows = pages.iter().map(|page| row(page) + 1).max().unwrap_or(0);
+        let mut row_heights = vec![0.0f64; n_rows];
+        for page in pages {
+            row_heights[row(page)] = row_heights[row(page)].max(page.size[1]);
+        }
+        let row_tops = row_heights
+            .iter()
+            .scan(origin[1], |top, &height| {
+                let row_top = *top;
+                *top += if self.adjust_document {
+                    page_height_max
+                } else {
+                    match self.page_spacing {
+                        PdfImportPageSpacing::Continuous => height + self.row_gap,
+                        PdfImportPageSpacing::OnePerDocumentPage => format_height,
+                    }
+                };
+                Some(row_top)
+            })
+            .collect::<Vec<f64>>();
+
+        pages
+            .iter()
+            .map(|page| {
+                Vector2::new(
+                    origin[0] + column(page) as f64 * (column_width + self.column_gap),
+                    row_tops[row(page)],
+                )
+            })
+            .collect()
     }
 }
 
@@ -338,14 +432,30 @@ impl Engine {
             widget_flags |= self.change_pen_style(PenStyle::Selector);
         }
 
+        // The pages of a row of a Pdf can be wider than the document
+        let content_width = strokes
+            .iter()
+            .map(|(stroke, _)| stroke.bounds().maxs[0])
+            .fold(0.0, f64::max);
         if adjust_document {
-            let max_size = strokes
+            // A row of pages becomes a document page. The pages are placed from the origin.
+            let page_height = strokes
                 .iter()
-                .map(|(stroke, _)| stroke.bounds().extents())
-                .fold(Vector2::ZERO, |acc, x| acc.maxs(&x));
-            self.document.config.format.set_width(max_size[0]);
-            self.document.config.format.set_height(max_size[1]);
+                .map(|(stroke, _)| stroke.bounds().extents()[1])
+                .fold(0.0, f64::max);
+            self.document.config.format.set_width(content_width);
+            self.document.config.format.set_height(page_height);
             widget_flags |= self.set_doc_layout(Layout::FixedSize) | self.doc_resize_autoexpand()
+        } else if self.document.config.layout.is_fixed_width()
+            && content_width > self.document.config.format.width()
+        {
+            // Widened to keep the margin on the left on the right as well
+            let left = strokes
+                .iter()
+                .map(|(stroke, _)| stroke.bounds().mins[0])
+                .fold(f64::INFINITY, f64::min)
+                .max(0.0);
+            self.document.config.format.set_width(content_width + left);
         }
 
         let inserted = strokes
@@ -429,5 +539,100 @@ impl Engine {
         widget_flags.redraw = true;
 
         widget_flags
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A4: Vector2 = Vector2::new(100.0, 140.0);
+
+    fn pages(indices: Range<usize>) -> Vec<PdfPageToPlace> {
+        indices
+            .map(|index| PdfPageToPlace { index, size: A4 })
+            .collect()
+    }
+
+    fn prefs(columns: u32, first_page_alone: bool) -> PdfImportPrefs {
+        PdfImportPrefs {
+            columns,
+            first_page_alone,
+            column_gap: 10.0,
+            row_gap: 20.0,
+            ..PdfImportPrefs::default()
+        }
+    }
+
+    fn xy(positions: Vec<Vector2>) -> Vec<(f64, f64)> {
+        positions.into_iter().map(|p| (p[0], p[1])).collect()
+    }
+
+    #[test]
+    fn one_column_stacks_pages_with_the_row_gap() {
+        let positions = prefs(1, true).page_positions(&pages(0..3), Vector2::new(5.0, 7.0), 1000.0);
+        assert_eq!(xy(positions), [(5.0, 7.0), (5.0, 167.0), (5.0, 327.0)]);
+    }
+
+    #[test]
+    fn spreads_with_the_first_page_alone_on_the_right() {
+        let positions = prefs(2, true).page_positions(&pages(0..5), Vector2::ZERO, 1000.0);
+        assert_eq!(
+            xy(positions),
+            [
+                (110.0, 0.0),
+                (0.0, 160.0),
+                (110.0, 160.0),
+                (0.0, 320.0),
+                (110.0, 320.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn spreads_pair_up_as_in_the_pdf_when_starting_later() {
+        // Pages 4 to 6 (indices 3..6) of a book with a cover: page 4 is on the left, 5 on the right
+        let positions = prefs(2, true).page_positions(&pages(3..6), Vector2::ZERO, 1000.0);
+        assert_eq!(xy(positions), [(0.0, 0.0), (110.0, 0.0), (0.0, 160.0)]);
+        // Without a cover, page 5 (index 4) starts a row
+        let positions = prefs(2, false).page_positions(&pages(4..7), Vector2::ZERO, 1000.0);
+        assert_eq!(xy(positions), [(0.0, 0.0), (110.0, 0.0), (0.0, 160.0)]);
+    }
+
+    #[test]
+    fn grid_fills_rows_left_to_right() {
+        let positions = prefs(3, false).page_positions(&pages(0..4), Vector2::ZERO, 1000.0);
+        assert_eq!(
+            xy(positions),
+            [(0.0, 0.0), (110.0, 0.0), (220.0, 0.0), (0.0, 160.0)]
+        );
+    }
+
+    #[test]
+    fn rows_take_a_document_page_each_when_asked_or_adjusted() {
+        let one_per_page = PdfImportPrefs {
+            page_spacing: PdfImportPageSpacing::OnePerDocumentPage,
+            ..prefs(2, false)
+        };
+        let positions = one_per_page.page_positions(&pages(0..3), Vector2::ZERO, 1000.0);
+        assert_eq!(xy(positions), [(0.0, 0.0), (110.0, 0.0), (0.0, 1000.0)]);
+
+        // Adjusted: the document page becomes as high as the highest page, without a row gap
+        let adjusted = PdfImportPrefs {
+            adjust_document: true,
+            ..prefs(2, false)
+        };
+        let mut to_place = pages(0..3);
+        to_place[2].size[1] = 150.0;
+        let positions = adjusted.page_positions(&to_place, Vector2::ZERO, 1000.0);
+        assert_eq!(xy(positions), [(0.0, 0.0), (110.0, 0.0), (0.0, 150.0)]);
+    }
+
+    #[test]
+    fn columns_are_as_wide_as_the_widest_page() {
+        let mut to_place = pages(0..2);
+        to_place[0].size[0] = 130.0;
+        let positions = prefs(2, false).page_positions(&to_place, Vector2::ZERO, 1000.0);
+        assert_eq!(xy(positions), [(0.0, 0.0), (140.0, 0.0)]);
     }
 }
