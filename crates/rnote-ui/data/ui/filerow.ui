@@ -78,6 +78,12 @@
             <attribute name="action">filerow.duplicate</attribute>
           </item>
         </section>
+        <section>
+          <item>
+            <attribute name="label" translatable="yes">New Folder</attribute>
+            <attribute name="action">filerow.new-folder</attribute>
+          </item>
+        </section>
       </menu>
     </object>
   </template>
