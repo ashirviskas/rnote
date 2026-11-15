@@ -321,5 +321,8 @@ impl RnFileRow {
         self.imp()
             .action_group
             .add_action(&actions::duplicate(self, appwindow));
+        self.imp()
+            .action_group
+            .add_action(&actions::new_folder(self, appwindow));
     }
 }

@@ -227,7 +227,7 @@
       <menu id="workspace_dir_actions_menu_model">
         <section>
           <item>
-            <attribute name="label" translatable="yes">Create new Folder</attribute>
+            <attribute name="label" translatable="yes">New Folder</attribute>
             <attribute name="action">workspacebrowser.create-folder</attribute>
           </item>
           <item>
