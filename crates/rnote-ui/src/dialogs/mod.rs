@@ -1,6 +1,7 @@
 // Modules
 pub(crate) mod export;
 pub(crate) mod import;
+pub(crate) mod pdfpreview;
 
 // Imports
 use crate::appwindow::RnAppWindow;

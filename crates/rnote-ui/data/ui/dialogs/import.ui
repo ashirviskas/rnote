@@ -27,115 +27,197 @@
           </object>
         </child>
         <property name="content">
-          <object class="AdwClamp">
-            <property name="maximum-size">800</property>
-            <property name="tightening-threshold">600</property>
-            <property name="hexpand">true</property>
-            <property name="vexpand">false</property>
-            <property name="valign">fill</property>
-            <property name="halign">fill</property>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <style>
+              <class name="background" />
+            </style>
             <child>
-              <object class="GtkBox">
-                <property name="orientation">vertical</property>
-                <property name="spacing">24</property>
-                <property name="margin-start">12</property>
-                <property name="margin-end">12</property>
-                <property name="margin-top">12</property>
-                <property name="margin-bottom">12</property>
-                <style>
-                  <class name="background" />
-                </style>
+              <object class="AdwClamp">
+                <property name="maximum-size">800</property>
+                <property name="tightening-threshold">600</property>
                 <child>
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
-                    <property name="halign">fill</property>
-                    <property name="spacing">12</property>
+                    <property name="spacing">6</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
+                    <property name="margin-top">12</property>
                     <style>
                       <class name="card" />
-                      <class name="view" />
                     </style>
                     <child>
-                      <object class="GtkLabel">
-                        <property name="margin-start">24</property>
-                        <property name="margin-end">24</property>
-                        <property name="margin-top">12</property>
-                        <style>
-                          <class name="title-4" />
-                        </style>
-                        <property name="label" translatable="yes">Info</property>
-                        <property name="halign">center</property>
+                      <object class="GtkDrawingArea" id="pdf_import_preview_area">
+                        <property name="content-height">280</property>
+                        <property name="hexpand">true</property>
                       </object>
                     </child>
                     <child>
-                      <object class="GtkLabel" id="pdf_info_label">
-                        <property name="halign">start</property>
-                        <property name="margin-start">24</property>
-                        <property name="margin-end">24</property>
-                        <property name="margin-bottom">12</property>
-                        <property name="use-markup">true</property>
-                        <property name="ellipsize">end</property>
+                      <object class="GtkLabel" id="pdf_import_preview_caption">
+                        <property name="margin-start">12</property>
+                        <property name="margin-end">12</property>
+                        <property name="margin-bottom">8</property>
+                        <property name="wrap">true</property>
+                        <property name="justify">center</property>
+                        <style>
+                          <class name="caption" />
+                          <class name="dim-label" />
+                        </style>
                       </object>
                     </child>
                   </object>
                 </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkScrolledWindow">
+                <property name="hscrollbar-policy">never</property>
+                <property name="propagate-natural-height">true</property>
+                <property name="vexpand">true</property>
                 <child>
-                  <object class="AdwPreferencesGroup">
-                    <property name="title" translatable="yes">Pdf Import Preferences</property>
+                  <object class="AdwClamp">
+                    <property name="maximum-size">800</property>
+                    <property name="tightening-threshold">600</property>
+                    <property name="hexpand">true</property>
+                    <property name="vexpand">false</property>
+                    <property name="valign">fill</property>
                     <property name="halign">fill</property>
                     <child>
-                      <object class="AdwSpinRow" id="pdf_page_start_row">
-                        <property name="title" translatable="yes">Start Page</property>
-                        <property name="adjustment">pdf_page_start_adj</property>
-                        <property name="numeric">true</property>
-                        <property name="digits">0</property>
-                        <property name="climb-rate">1</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwSpinRow" id="pdf_page_end_row">
-                        <property name="title" translatable="yes">End Page</property>
-                        <property name="adjustment">pdf_page_end_adj</property>
-                        <property name="numeric">true</property>
-                        <property name="digits">0</property>
-                        <property name="climb-rate">1</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwSwitchRow" id="pdf_import_adjust_document_row">
-                        <property name="title" translatable="yes">Adjust Document</property>
-                        <property name="subtitle" translatable="yes">Whether the document layout should be adjusted to the Pdf</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwSpinRow" id="pdf_import_width_row">
-                        <property name="title" translatable="yes">Page Width (%)</property>
-                        <property name="subtitle" translatable="yes">Set the width of imported Pdf's in percentage to the format width</property>
-                        <property name="adjustment">pdf_import_width_perc_adj</property>
-                        <property name="digits">0</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwComboRow" id="pdf_import_page_spacing_row">
-                        <property name="title" translatable="yes">Page Spacing</property>
-                        <property name="subtitle" translatable="yes">How Pdf pages are spaced</property>
-                        <property name="model">
-                          <object class="GtkStringList">
-                            <items>
-                              <item translatable="yes">Continuous</item>
-                              <item translatable="yes">One per Document Page</item>
-                            </items>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">24</property>
+                        <property name="margin-start">12</property>
+                        <property name="margin-end">12</property>
+                        <property name="margin-top">12</property>
+                        <property name="margin-bottom">12</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="halign">fill</property>
+                            <property name="spacing">12</property>
+                            <style>
+                              <class name="card" />
+                              <class name="view" />
+                            </style>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="margin-start">24</property>
+                                <property name="margin-end">24</property>
+                                <property name="margin-top">12</property>
+                                <style>
+                                  <class name="title-4" />
+                                </style>
+                                <property name="label" translatable="yes">Info</property>
+                                <property name="halign">center</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="pdf_info_label">
+                                <property name="halign">start</property>
+                                <property name="margin-start">24</property>
+                                <property name="margin-end">24</property>
+                                <property name="margin-bottom">12</property>
+                                <property name="use-markup">true</property>
+                                <property name="ellipsize">end</property>
+                              </object>
+                            </child>
                           </object>
-                        </property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwActionRow" id="pdf_import_kept_row">
-                        <property name="title" translatable="yes">The Pdf Is Kept</property>
-                        <property name="subtitle" translatable="yes">The pages are drawn from the Pdf, which stays with the note as it is. They can be exported again, as they are or with the notes on them</property>
-                        <property name="subtitle-lines">0</property>
-                        <child type="prefix">
-                          <object class="GtkImage">
-                            <property name="icon-name">workspacelistentryicon-document-symbolic</property>
+                        </child>
+                        <child>
+                          <object class="AdwPreferencesGroup">
+                            <property name="title" translatable="yes">Pdf Import Preferences</property>
+                            <property name="halign">fill</property>
+                            <child>
+                              <object class="AdwSpinRow" id="pdf_page_start_row">
+                                <property name="title" translatable="yes">Start Page</property>
+                                <property name="adjustment">pdf_page_start_adj</property>
+                                <property name="numeric">true</property>
+                                <property name="digits">0</property>
+                                <property name="climb-rate">1</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwSpinRow" id="pdf_page_end_row">
+                                <property name="title" translatable="yes">End Page</property>
+                                <property name="adjustment">pdf_page_end_adj</property>
+                                <property name="numeric">true</property>
+                                <property name="digits">0</property>
+                                <property name="climb-rate">1</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwSwitchRow" id="pdf_import_adjust_document_row">
+                                <property name="title" translatable="yes">Adjust Document</property>
+                                <property name="subtitle" translatable="yes">Whether the document layout should be adjusted to the Pdf</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwSpinRow" id="pdf_import_width_row">
+                                <property name="title" translatable="yes">Page Width (%)</property>
+                                <property name="subtitle" translatable="yes">Set the width of imported Pdf's in percentage to the format width</property>
+                                <property name="adjustment">pdf_import_width_perc_adj</property>
+                                <property name="digits">0</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwSpinRow" id="pdf_import_columns_row">
+                                <property name="title" translatable="yes">Pages per Row</property>
+                                <property name="subtitle" translatable="yes">1 places the pages below each other, 2 side by side like an open book</property>
+                                <property name="adjustment">pdf_import_columns_adj</property>
+                                <property name="numeric">true</property>
+                                <property name="digits">0</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwSwitchRow" id="pdf_import_first_page_alone_row">
+                                <property name="title" translatable="yes">First Page Alone</property>
+                                <property name="subtitle" translatable="yes">The first page sits alone on the right, like the cover of a book, so that the pages pair up as in the printed book</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwComboRow" id="pdf_import_page_spacing_row">
+                                <property name="title" translatable="yes">Page Spacing</property>
+                                <property name="subtitle" translatable="yes">How Pdf pages are spaced</property>
+                                <property name="model">
+                                  <object class="GtkStringList">
+                                    <items>
+                                      <item translatable="yes">Continuous</item>
+                                      <item translatable="yes">One per Document Page</item>
+                                    </items>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwSpinRow" id="pdf_import_column_gap_row">
+                                <property name="title" translatable="yes">Gap Between Pages</property>
+                                <property name="subtitle" translatable="yes">The space between the pages of a row</property>
+                                <property name="adjustment">pdf_import_column_gap_adj</property>
+                                <property name="numeric">true</property>
+                                <property name="digits">0</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwSpinRow" id="pdf_import_row_gap_row">
+                                <property name="title" translatable="yes">Gap Between Rows</property>
+                                <property name="subtitle" translatable="yes">The space between rows of pages, with continuous spacing</property>
+                                <property name="adjustment">pdf_import_row_gap_adj</property>
+                                <property name="numeric">true</property>
+                                <property name="digits">0</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwActionRow" id="pdf_import_kept_row">
+                                <property name="title" translatable="yes">The Pdf Is Kept</property>
+                                <property name="subtitle" translatable="yes">The pages are drawn from the Pdf, which stays with the note as it is. They can be exported again, as they are or with the notes on them</property>
+                                <property name="subtitle-lines">0</property>
+                                <child type="prefix">
+                                  <object class="GtkImage">
+                                    <property name="icon-name">workspacelistentryicon-document-symbolic</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
                           </object>
                         </child>
                       </object>
@@ -156,6 +238,24 @@
   <object class="GtkAdjustment" id="pdf_page_end_adj">
     <property name="step-increment">1</property>
     <property name="page-increment">2</property>
+  </object>
+  <object class="GtkAdjustment" id="pdf_import_columns_adj">
+    <property name="step-increment">1</property>
+    <property name="upper">20</property>
+    <property name="lower">1</property>
+    <property name="value">1</property>
+  </object>
+  <object class="GtkAdjustment" id="pdf_import_column_gap_adj">
+    <property name="step-increment">4</property>
+    <property name="upper">1000</property>
+    <property name="lower">0</property>
+    <property name="value">16</property>
+  </object>
+  <object class="GtkAdjustment" id="pdf_import_row_gap_adj">
+    <property name="step-increment">4</property>
+    <property name="upper">1000</property>
+    <property name="lower">0</property>
+    <property name="value">16</property>
   </object>
   <object class="GtkAdjustment" id="pdf_import_width_perc_adj">
     <property name="step-increment">1</property>

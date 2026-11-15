@@ -9,7 +9,7 @@ use rnote_engine::engine::export::{
     DocExportFormat, DocPagesExportFormat, DocPagesExportPrefs, SelectionExportFormat,
     SelectionExportPrefs,
 };
-use rnote_engine::engine::import::XoppImportPrefs;
+use rnote_engine::engine::import::{PdfImportPrefs, XoppImportPrefs};
 use rnote_engine::notefolder::{Device, NoteFolder};
 use smol::fs::File;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
@@ -50,6 +50,17 @@ pub(crate) enum Command {
         /// When importing a .xopp file, the import dpi can be specified.
         #[arg(long, default_value_t = XoppImportPrefs::default().dpi)]
         xopp_dpi: f64,
+        /// When importing a .pdf file, how many pages are placed next to each other in a row.
+        #[arg(long, default_value_t = PdfImportPrefs::default().columns)]
+        pdf_columns: u32,
+        /// When importing a .pdf file with more than one page per row, whether the first page sits alone at the
+        /// end of the first row, like the cover of a book.
+        #[arg(long, default_value_t = PdfImportPrefs::default().first_page_alone, action = clap::ArgAction::Set)]
+        pdf_first_page_alone: bool,
+        /// When importing a .pdf file, whether the document is adjusted to the Pdf: a row of pages per document
+        /// page.
+        #[arg(long)]
+        pdf_adjust_document: bool,
     },
     /// Exports the Rnote file(s) and saves it/them in the desired format.{n}
     /// See sub-commands for usage.
@@ -301,9 +312,18 @@ pub(crate) async fn run() -> anyhow::Result<()> {
             rnote_file,
             input_file,
             xopp_dpi,
+            pdf_columns,
+            pdf_first_page_alone,
+            pdf_adjust_document,
         } => {
             println!("Importing..");
-            import::run_import(&rnote_file, &input_file, xopp_dpi).await?;
+            let pdf_import_prefs = PdfImportPrefs {
+                columns: pdf_columns,
+                first_page_alone: pdf_first_page_alone,
+                adjust_document: pdf_adjust_document,
+                ..PdfImportPrefs::default()
+            };
+            import::run_import(&rnote_file, &input_file, xopp_dpi, pdf_import_prefs).await?;
             println!("Import finished!");
         }
         Command::Export {

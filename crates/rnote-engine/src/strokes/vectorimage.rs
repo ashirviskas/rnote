@@ -1,11 +1,11 @@
 // Imports
+use super::Content;
 use super::content::GeneratedContentImages;
 use super::imagetext::{self, ImageTextLine};
 use super::resize::{ImageSizeOption, calculate_resize_ratio};
-use super::{Content, Stroke};
 use crate::Image;
 use crate::document::Format;
-use crate::engine::import::{PdfImportPageSpacing, PdfImportPrefs};
+use crate::engine::import::{PdfImportPrefs, PdfPageToPlace};
 use crate::notefolder::FileName;
 use crate::svg::USVG_FONTDB;
 use crate::{Drawable, Svg};
@@ -422,8 +422,6 @@ impl VectorImage {
         } else {
             return Ok(vec![]);
         };
-        let x = insert_pos[0];
-        let mut y = insert_pos[1];
 
         struct ImportedPage {
             bounds: Aabb,
@@ -434,40 +432,39 @@ impl VectorImage {
             pdf_page: Option<PdfPageRef>,
         }
 
-        // TODO: investigate if this can be parallelized with rayon's `par_iter()`
-        let imported = page_range
-            .filter_map(|page_i| {
-                let page = pages.get(page_i)?;
-                let (intrinsic_width, intrinsic_height) = {
-                    let dimensions = page.render_dimensions();
-                    (dimensions.0 as f64, dimensions.1 as f64)
-                };
-                let width = intrinsic_width * page_zoom;
-                let height = intrinsic_height * page_zoom;
-                let bounds = Aabb::new(Vector2::new(x, y), Vector2::new(x + width, y + height));
+        let to_place = page_range
+            .filter_map(|index| {
+                let dimensions = pages.get(index)?.render_dimensions();
+                Some(PdfPageToPlace {
+                    index,
+                    size: Vector2::new(dimensions.0 as f64, dimensions.1 as f64) * page_zoom,
+                })
+            })
+            .collect::<Vec<PdfPageToPlace>>();
+        let positions = pdf_import_prefs.page_positions(&to_place, insert_pos, format.height());
 
-                if pdf_import_prefs.adjust_document {
-                    y += height
-                } else {
-                    y += match pdf_import_prefs.page_spacing {
-                        PdfImportPageSpacing::Continuous => {
-                            height + Stroke::IMPORT_OFFSET_DEFAULT[1] * 0.5
-                        }
-                        PdfImportPageSpacing::OnePerDocumentPage => format.height(),
-                    };
-                }
+        // TODO: investigate if this can be parallelized with rayon's `par_iter()`
+        let imported = to_place
+            .into_iter()
+            .zip(positions)
+            .map(|(to_place, pos)| {
+                let page_i = to_place.index;
+                let page = &pages[page_i];
+                let dimensions = page.render_dimensions();
+                let intrinsic_size = Vector2::new(dimensions.0 as f64, dimensions.1 as f64);
+                let bounds = Aabb::new(pos, pos + to_place.size);
                 let svg_data = (!from_pdf)
                     .then(|| hayro_svg::convert(page, &interpreter_settings, &render_settings));
-                Some(ImportedPage {
+                ImportedPage {
                     bounds,
-                    intrinsic_size: Vector2::new(intrinsic_width, intrinsic_height),
+                    intrinsic_size,
                     svg_data,
                     text_lines: imagetext::pdf_page_text(page, &interpreter_settings),
                     pdf_page: pdf_file.clone().map(|file| PdfPageRef {
                         file,
                         page: page_i as u32,
                     }),
-                })
+                }
             })
             .collect::<Vec<ImportedPage>>();
 

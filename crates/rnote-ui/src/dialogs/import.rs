@@ -1,6 +1,7 @@
 //adw::ToolbarView is a replacement for adw::Dialog but not suitable for an async flow
 
 // Imports
+use super::pdfpreview::{PdfImportPreview, PreviewRequest};
 use crate::canvas::RnCanvas;
 use crate::{RnAppWindow, config};
 use adw::prelude::*;
@@ -263,6 +264,15 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     let pdf_import_kept_row: adw::ActionRow = builder.object("pdf_import_kept_row").unwrap();
     let pdf_import_adjust_document_row: adw::SwitchRow =
         builder.object("pdf_import_adjust_document_row").unwrap();
+    let pdf_import_columns_row: adw::SpinRow = builder.object("pdf_import_columns_row").unwrap();
+    let pdf_import_first_page_alone_row: adw::SwitchRow =
+        builder.object("pdf_import_first_page_alone_row").unwrap();
+    let pdf_import_column_gap_row: adw::SpinRow =
+        builder.object("pdf_import_column_gap_row").unwrap();
+    let pdf_import_row_gap_row: adw::SpinRow = builder.object("pdf_import_row_gap_row").unwrap();
+    let pdf_import_preview_area: gtk4::DrawingArea =
+        builder.object("pdf_import_preview_area").unwrap();
+    let pdf_import_preview_caption: Label = builder.object("pdf_import_preview_caption").unwrap();
     let import_pdf_button_cancel: Button = builder.object("import_pdf_button_cancel").unwrap();
     let import_pdf_button_confirm: Button = builder.object("import_pdf_button_confirm").unwrap();
 
@@ -276,6 +286,31 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
         .invert_boolean()
         .sync_create()
         .build();
+    pdf_import_columns_row
+        .bind_property("value", &pdf_import_first_page_alone_row, "sensitive")
+        .transform_to(|_, columns: f64| Some(columns > 1.0))
+        .sync_create()
+        .build();
+    pdf_import_columns_row
+        .bind_property("value", &pdf_import_column_gap_row, "sensitive")
+        .transform_to(|_, columns: f64| Some(columns > 1.0))
+        .sync_create()
+        .build();
+    // The row gap only counts with continuous spacing, when the rows do not take a document page each
+    let update_row_gap_sensitive = clone!(
+        #[weak]
+        pdf_import_row_gap_row,
+        #[weak]
+        pdf_import_adjust_document_row,
+        #[weak]
+        pdf_import_page_spacing_row,
+        move || {
+            let continuous = PdfImportPageSpacing::try_from(pdf_import_page_spacing_row.selected())
+                .is_ok_and(|spacing| matches!(spacing, PdfImportPageSpacing::Continuous));
+            pdf_import_row_gap_row
+                .set_sensitive(continuous && !pdf_import_adjust_document_row.is_active());
+        }
+    );
 
     let pdf_import_prefs = appwindow
         .engine_config()
@@ -302,6 +337,11 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     pdf_import_width_row.set_value(pdf_import_prefs.page_width_perc);
     pdf_import_page_spacing_row.set_selected(pdf_import_prefs.page_spacing.to_u32().unwrap());
     pdf_import_adjust_document_row.set_active(pdf_import_prefs.adjust_document);
+    pdf_import_columns_row.set_value(pdf_import_prefs.columns as f64);
+    pdf_import_first_page_alone_row.set_active(pdf_import_prefs.first_page_alone);
+    pdf_import_column_gap_row.set_value(pdf_import_prefs.column_gap);
+    pdf_import_row_gap_row.set_value(pdf_import_prefs.row_gap);
+    update_row_gap_sensitive();
 
     pdf_page_start_row
         .bind_property("value", &pdf_page_end_row.adjustment(), "lower")
@@ -317,6 +357,8 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     pdf_import_page_spacing_row.connect_selected_notify(clone!(
         #[weak]
         appwindow,
+        #[strong]
+        update_row_gap_sensitive,
         move |row| {
             let page_spacing = PdfImportPageSpacing::try_from(row.selected()).unwrap();
             appwindow
@@ -325,6 +367,59 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                 .import_prefs
                 .pdf_import_prefs
                 .page_spacing = page_spacing;
+            update_row_gap_sensitive();
+        }
+    ));
+
+    pdf_import_columns_row.connect_value_notify(clone!(
+        #[weak]
+        appwindow,
+        move |row| {
+            appwindow
+                .engine_config()
+                .write()
+                .import_prefs
+                .pdf_import_prefs
+                .columns = row.value() as u32;
+        }
+    ));
+
+    pdf_import_first_page_alone_row.connect_active_notify(clone!(
+        #[weak]
+        appwindow,
+        move |row| {
+            appwindow
+                .engine_config()
+                .write()
+                .import_prefs
+                .pdf_import_prefs
+                .first_page_alone = row.is_active();
+        }
+    ));
+
+    pdf_import_column_gap_row.connect_value_notify(clone!(
+        #[weak]
+        appwindow,
+        move |row| {
+            appwindow
+                .engine_config()
+                .write()
+                .import_prefs
+                .pdf_import_prefs
+                .column_gap = row.value();
+        }
+    ));
+
+    pdf_import_row_gap_row.connect_value_notify(clone!(
+        #[weak]
+        appwindow,
+        move |row| {
+            appwindow
+                .engine_config()
+                .write()
+                .import_prefs
+                .pdf_import_prefs
+                .row_gap = row.value();
         }
     ));
 
@@ -344,6 +439,8 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     pdf_import_adjust_document_row.connect_active_notify(clone!(
         #[weak]
         appwindow,
+        #[strong]
+        update_row_gap_sensitive,
         move |row| {
             appwindow
                 .engine_config()
@@ -351,17 +448,18 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                 .import_prefs
                 .pdf_import_prefs
                 .adjust_document = row.is_active();
+            update_row_gap_sensitive();
         }
     ));
 
     let pdf_data = Arc::new(input_file.load_bytes_future().await?.0.to_vec());
-    let pdf = if let Some(password) = password.as_ref() {
+    let pdf = Arc::new(if let Some(password) = password.as_ref() {
         hayro_syntax::Pdf::new_with_password(pdf_data, password)
             .map_err(|err| anyhow!("Creating Pdf instance failed, Err: {err:?}"))?
     } else {
         hayro_syntax::Pdf::new(pdf_data)
             .map_err(|err| anyhow!("Creating Pdf instance failed, Err: {err:?}"))?
-    };
+    });
     let pdf_metadata = pdf.metadata();
 
     let file_name = input_file.basename().map_or_else(
@@ -403,6 +501,67 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
 
     pdf_page_end_row.set_range(1.into(), n_pages as f64);
     pdf_page_end_row.set_value(n_pages as f64);
+
+    // The preview follows every row that changes which pages are imported or where they go. Connected after the
+    // rows' own handlers, so that the prefs are already updated.
+    let doc_config = canvas.engine_ref().document.config.clone();
+    let preview = PdfImportPreview::new(
+        &pdf_import_preview_area,
+        &pdf_import_preview_caption,
+        Arc::clone(&pdf),
+        doc_config.format,
+        doc_config.layout,
+    );
+    let update_preview = clone!(
+        #[weak]
+        appwindow,
+        #[weak]
+        pdf_page_start_row,
+        #[weak]
+        pdf_page_end_row,
+        move || {
+            let start = (pdf_page_start_row.value() as usize).saturating_sub(1);
+            let end = pdf_page_end_row.value() as usize;
+            preview.update(PreviewRequest {
+                prefs: appwindow
+                    .engine_config()
+                    .read()
+                    .import_prefs
+                    .pdf_import_prefs,
+                pages: start..end.max(start),
+            });
+        }
+    );
+    for row in [
+        &pdf_page_start_row,
+        &pdf_page_end_row,
+        &pdf_import_columns_row,
+        &pdf_import_column_gap_row,
+        &pdf_import_row_gap_row,
+        &pdf_import_width_row,
+    ] {
+        row.connect_value_notify(clone!(
+            #[strong]
+            update_preview,
+            move |_| update_preview()
+        ));
+    }
+    for row in [
+        &pdf_import_first_page_alone_row,
+        &pdf_import_adjust_document_row,
+    ] {
+        row.connect_active_notify(clone!(
+            #[strong]
+            update_preview,
+            move |_| update_preview()
+        ));
+    }
+    pdf_import_page_spacing_row.connect_selected_notify(clone!(
+        #[strong]
+        update_preview,
+        move |_| update_preview()
+    ));
+    update_preview();
 
     // Listen to responses
 
